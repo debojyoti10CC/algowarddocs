@@ -1,0 +1,69 @@
+---
+title: FAQ
+description: "Answers to questions that come up when evaluating or adopting Ward."
+---
+
+<AccordionGroup>
+  <Accordion title="Does Ward test the public facilitator.goplausible.xyz instance?">
+    No, and this is deliberate. Ward always runs against a facilitator it controls end to end — a
+    self-hosted instance booted via `docker-compose.yml`, or (for the hosted API) whatever URL a
+    customer explicitly submits. Every finding is about a real, running process Ward owns for the
+    duration of the check, never shared or production infrastructure.
+  </Accordion>
+  <Accordion title="Is anything in Ward mocked?">
+    No. Every payment is a real, correctly-signed Algorand transaction; every tamper is applied to
+    real transaction bytes; every check is a real HTTP call to a real facilitator process; several
+    invariants genuinely settle on Algorand TestNet. A PASS or FAIL always reflects the actual
+    behavior of the facilitator under test.
+  </Accordion>
+  <Accordion title="What does a PASS actually mean?">
+    That the facilitator's `/verify` and/or `/settle` endpoints behaved correctly against that
+    specific invariant's adversarial sub-cases, for that run. It is not a formal proof of
+    correctness for every possible input — it's evidence, grounded in the x402 spec and the
+    USENIX Security '26 study's documented violation classes, for exactly the properties Ward
+    checks. See [How Verification Works](/invariants/overview) for what each guarantee covers.
+  </Accordion>
+  <Accordion title="Why do only 5 of the 8 guarantees gate CI?">
+    `U1`, `U2`, `U3`, `U4`, and `A1` are must-have — they cover the four USENIX violation classes
+    directly and represent baseline correctness every facilitator should satisfy unconditionally.
+    `U5`, `A2`, and `A3` are real but narrower properties (bounded rejection cost, early
+    opt-in detection, post-rekey authorization) — still reported every run, but not blocking.
+  </Accordion>
+  <Accordion title="Can Ward test a MainNet facilitator?">
+    Not out of the box. Ward defaults to Algorand TestNet, and the CLI's funded `WARD_*` accounts
+    are TestNet-only. Testing a MainNet facilitator would mean pointing `WARD_NETWORK`,
+    `ALGOD_TESTNET_URL`, and every funded account at MainNet equivalents — with real economic
+    exposure, since several invariants genuinely settle payments as part of the check. The hosted
+    verification API is explicitly TestNet-only for the same reason; see
+    [Verification API Overview](/server/overview).
+  </Accordion>
+  <Accordion title="Why does A1 use /verify instead of /settle for its malicious sub-cases?">
+    `/verify` exercises the exact same `verifyFeePayerTransaction` safety check by signing the
+    tampered fee-payer leg internally, without ever broadcasting it — so a real bug in the
+    facilitator's check can't actually damage its operational signing key, even though A1 runs
+    against a real, self-hosted instance rather than a mock. See
+    [Atomic Group Integrity](/invariants/a1-atomic-group-integrity).
+  </Accordion>
+  <Accordion title="What happens if a run crashes mid-invariant?">
+    `runInvariants()` catches and records a failure per-invariant rather than letting one
+    exception abort the whole suite. The one invariant with a real, hard-to-reverse on-chain side
+    effect — `A3`'s account rekey — always reverts in a `finally` block regardless of outcome, and
+    runs on a disposable throwaway account specifically so a failed revert can never strand your
+    shared test accounts. See [D11](/reference/decision-log#d11-a3-runs-on-a-disposable-throwaway-account-not-the-shared-fixture-account).
+  </Accordion>
+  <Accordion title="Can I add support for another blockchain?">
+    Yes — that's the point of the chain-agnostic core. See
+    [Adding a Chain Adapter](/guides/adding-a-chain-adapter) for what a new `ChainAdapter`
+    implementation needs to provide, and why the universal invariants (`U1`–`U5`) don't change
+    when you do.
+  </Accordion>
+  <Accordion title="Where does the evidence in a report actually come from?">
+    Every invariant records its literal request and response bodies via `EvidenceCollector` as it
+    runs — nothing is reconstructed or summarized after the fact. `ward fuzz <id>` prints this in
+    full; the JSON report written by `ward test` contains it for every invariant; the hosted API's
+    `ReportSummary` reduces it to a compact, readable form while preserving every pass/fail result
+    and its `source` citation.
+  </Accordion>
+</AccordionGroup>
+
+<Card title="Still have questions? Check the setup guide" icon="life-ring" href="/guides/troubleshooting" horizontal />

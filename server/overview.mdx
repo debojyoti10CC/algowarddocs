@@ -1,0 +1,83 @@
+---
+title: Verification API Overview
+description: "A hosted, x402-gated HTTP endpoint that runs Ward against any facilitator URL you submit."
+---
+
+`src/server/index.ts` exposes Ward's exact same adversarial invariant suite as a small, paid HTTP
+service. A customer pays $1.00 over x402, submits the URL of **their own** facilitator, and gets
+back the same pass/fail evidence `ward test` writes to `reports/latest.json` — Ward's core engine
+(`core/`, `chain-adapters/`, `invariants/`) is completely unchanged; this is a second, parallel
+consumer of it alongside the CLI.
+
+<Info>
+  This is Ward testing *itself* as a resource — the server is both an x402 **resource server**
+  (it gets paid via x402 for its own endpoint) and the thing that then runs x402 **facilitator**
+  tests against whatever URL the paying customer supplies.
+</Info>
+
+## Why a hosted option
+
+Not every operator or auditor wants to clone a repo, boot Docker, and manage funded TestNet
+accounts just to get a one-time report on a facilitator. The paid endpoint trades that setup for a
+single HTTP call and a payment.
+
+## What it's built on
+
+<CardGroup cols={2}>
+  <Card title="@x402/express" icon="node-js">
+    `paymentMiddleware()` gates the route; `x402ResourceServer` handles the payment lifecycle
+    against an upstream facilitator.
+  </Card>
+  <Card title="@x402/avm" icon="link">
+    `ExactAvmScheme` is registered for `algorand:*`, so the service itself accepts Algorand x402
+    payments as payment for its own endpoint.
+  </Card>
+  <Card title="@x402/extensions" icon="puzzle-piece">
+    `bazaarResourceServerExtension` and `declareDiscoveryExtension` register the endpoint into
+    Bazaar, x402's discovery directory, so it's publicly listed once a real payment settles.
+  </Card>
+  <Card title="Ward's own core engine" icon="shield-check">
+    `buildScenario()`, `runInvariants()`, and `buildReport()` — imported directly from `cli/setup.ts`,
+    `core/runner.ts`, and `core/report-engine.ts`. Nothing is duplicated or reimplemented.
+  </Card>
+</CardGroup>
+
+## Two separate facilitators are in play
+
+This is the detail most worth being precise about:
+
+<Steps>
+  <Step title="The facilitator that gets PAID (PAYMENT_FACILITATOR_URL)">
+    Processes the customer's $1.00 payment **to** this service. Defaults to the public
+    `https://facilitator.goplausible.xyz` so the service works even when deployed somewhere that
+    can't reach a self-hosted facilitator on `localhost`. This facilitator is never itself tested
+    — it just needs to work.
+  </Step>
+  <Step title="The facilitator that gets TESTED (the request body's facilitatorUrl)">
+    Whatever URL the customer submits in `POST /verify-facilitator`'s body — this is the
+    facilitator Ward's invariant suite actually runs against.
+  </Step>
+</Steps>
+
+## Reused probing identity
+
+The same `.env`-fixed test accounts the CLI uses (`WARD_CLIENT`, `WARD_PAYTO`, `WARD_FUNDER`) are
+reused here as the identity that probes whatever facilitator a customer submits — this server only
+swaps **which facilitator gets tested**, never **who does the testing**. See `DECISIONS.md` for the
+full reasoning behind reusing the CLI's fixed accounts rather than minting fresh ones per request.
+
+<Warning>
+  Currently **TestNet-only**. Several invariants (`U1`'s baseline, `U2`, `U3`, `A1`'s baseline)
+  settle real payments as part of the check, funded by `WARD_*`'s TestNet balances. Verifying a
+  real MainNet facilitator would need its own funded MainNet probing accounts and a deliberate
+  spend-cap/consent pass — that isn't wired up.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="code" href="/server/api-reference">
+    Every endpoint, request/response shape, and pricing detail.
+  </Card>
+  <Card title="Deployment" icon="cloud-arrow-up" href="/server/deployment">
+    Deploying your own instance to Render.
+  </Card>
+</CardGroup>

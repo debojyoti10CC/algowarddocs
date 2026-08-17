@@ -1,0 +1,80 @@
+---
+title: "ward init"
+description: "Boot the self-hosted facilitator, fund test accounts, and verify one real payment end-to-end."
+---
+
+## Usage
+
+```bash
+ward init
+# or, from source:
+npm run ward -- init
+```
+
+## What it does
+
+<Steps>
+  <Step title="Boots the facilitator">
+    Runs `docker compose up -d --build`, which builds the image defined in
+    `docker/facilitator.Dockerfile` (cloning `GoPlausible/x402-avm` at build time) and starts it,
+    exposing port `4022`. Fails fast with a clear error if Docker isn't running.
+  </Step>
+  <Step title="Waits for the facilitator to become healthy">
+    Polls `GET /supported` on `FACILITATOR_URL` (default `http://localhost:4022`) up to 30 times,
+    2 seconds apart, before giving up — the facilitator's own image build and startup can take a
+    while the first time.
+  </Step>
+  <Step title="Funds the client account (if possible)">
+    If `WARD_FUNDER_PRIVATE_KEY` is set, sends 1 ALGO worth of native currency to
+    `WARD_CLIENT_PRIVATE_KEY`'s address to cover transaction fees. If it isn't set, prints a
+    warning with a link to the dispenser and continues — this lets you fund manually instead.
+  </Step>
+  <Step title="Verifies one real payment, end to end">
+    Builds a real signed payment, calls `/verify` (must be approved) and then `/settle` (must
+    succeed), and prints the resulting transaction id and a link to view it on an Algorand
+    explorer. This is the step that proves the facilitator is real, funded, and working —
+    everything `ward test` reports afterward is only meaningful once this step has passed.
+  </Step>
+</Steps>
+
+## Idempotency
+
+`ward init` is safe to re-run. `docker compose up -d --build` is a no-op rebuild if nothing
+changed, funding only tops up what's missing, and the manual-payment check simply runs again.
+
+## Example output
+
+```
+ward init
+→ starting the self-hosted facilitator (docker compose up -d --build)...
+✔ facilitator is up
+✔ funded <WARD_CLIENT address>
+→ verifying one real payment end-to-end (this is the step that proves the facilitator actually works)...
+  settled: <txId>
+  https://testnet.explorer.perawallet.app/tx/<txId>
+
+ward init complete — the facilitator is real, funded, and working. Run `ward test` next.
+```
+
+## Common failures
+
+<AccordionGroup>
+  <Accordion title="docker compose up failed — is Docker running?">
+    Start Docker Desktop (or your Docker daemon) and re-run `ward init`.
+  </Accordion>
+  <Accordion title="Facilitator did not become healthy after 30 attempts">
+    Check `docker compose logs facilitator` — usually a missing or malformed `AVM_PRIVATE_KEY`,
+    `EVM_PRIVATE_KEY`, or `SVM_PRIVATE_KEY` in `.env` (the upstream facilitator image
+    `process.exit(1)`s on startup if any are absent, even though Ward only exercises Algorand).
+  </Accordion>
+  <Accordion title="Manual verification payment was rejected at /verify">
+    Almost always unfunded or non-opted-in accounts. Confirm `WARD_CLIENT_PRIVATE_KEY`'s address
+    has TestNet ALGO and is opted into the TestNet USDC ASA (`10458941` by default).
+  </Accordion>
+  <Accordion title="Manual verification payment failed at /settle">
+    Check the printed `errorReason`/`errorMessage` — commonly an underfunded `AVM_PRIVATE_KEY`
+    address (it needs its own TestNet ALGO to co-sign fee-payer transactions).
+  </Accordion>
+</AccordionGroup>
+
+<Card title="Next: run the full suite" icon="flask" href="/cli/test" horizontal />

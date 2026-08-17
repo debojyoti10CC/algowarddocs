@@ -1,0 +1,83 @@
+---
+title: "Rekey Authorization"
+description: "A signature from a key that is no longer the account's spending authority must not settle."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">A3</Card>
+  <Card title="Category" icon="link">Algorand</Card>
+  <Card title="Priority" icon="circle-dashed">Stretch</Card>
+  <Card title="Violation class" icon="triangle-exclamation">Asset Theft (authorization)</Card>
+</CardGroup>
+
+## What it proves
+
+Algorand accounts can be **rekeyed** — their spending authority reassigned to a different key,
+without changing the account's address. A3 asks: if an account is rekeyed *after* signing a
+payment but *before* that payment settles, does the facilitator still honor a signature from a key
+that's no longer actually in control of the account?
+
+**Source:** Algorand rekeying (protocol primitive); `settle()` must not trust spending authority
+captured before a mid-flow rekey.
+
+## Why this runs on a disposable account
+
+A rekey is a real, potentially hard-to-reverse on-chain state change. A3 generates a brand-new,
+purpose-funded throwaway account rather than reusing the shared fixture client account every other
+invariant depends on — if the "rekey back" revert step ever failed to execute (a crashed process,
+a network partition mid-run), a shared account left rekeyed to a discarded key would strand every
+other invariant for the rest of that run, and any future run reusing the same `.env`. Isolating the
+blast radius to one small, disposable, funded-just-for-this-test account means the worst case is
+one clearly-logged account being stuck — not the whole suite. See
+[D11](/reference/decision-log#d11-a3-runs-on-a-disposable-throwaway-account-not-the-shared-fixture-account).
+
+The revert always runs, unconditionally, in a `finally` block; a failed revert is logged loudly
+(`ctx.logger.warn`) rather than silently swallowed.
+
+## How it works
+
+<Steps>
+  <Step title="Fund a throwaway account">
+    A fresh keypair is funded with just enough ALGO to cover its minimum balance (including ASA
+    opt-in) plus a handful of fees, via `ChainAdapter.fundAccount()`.
+  </Step>
+  <Step title="Sign a payment under the original key">
+    A zero-amount payment (proving spending authority is what's under test, not moving real
+    value) is built and signed under the account's original Ed25519 key.
+  </Step>
+  <Step title="Rekey the account on-chain">
+    The account is rekeyed to a brand-new authority address, mid-flow, after the payment above
+    was already signed.
+  </Step>
+  <Step title="Submit the stale-key-signed payload">
+    The payload signed *before* the rekey is submitted to `/settle`, *after* the rekey has
+    already landed on-chain.
+  </Step>
+  <Step title="Always revert the rekey">
+    Regardless of the settle outcome, the account is rekeyed back to itself in a `finally` block.
+  </Step>
+</Steps>
+
+## The real code path this targets
+
+Per [D7 #4](/reference/decision-log#d7-ground-truth-pulled-from-the-installed-package-source-not-just-docs),
+`settle()` unconditionally re-runs `verify()` from scratch — it never trusts a previously-cached
+`/verify` decision. The interesting question is whether that *fresh* verify checks spending
+authority against the account's *current* on-chain auth-addr, or only against the inherent
+ed25519 key embedded in the transaction sender field (which never changes even after a rekey). The
+facilitator's local `ed25519Verifier` pre-check uses the latter — a potential blind spot — but the
+subsequent `simulateTransactionGroup()` call runs a real algod simulation, which *does* enforce
+actual on-chain auth-addr rules. A3 tests the **net effect end-to-end** rather than assuming which
+internal layer would catch it.
+
+## Pass condition
+
+```ts
+const rejected = !settleResult.success;
+```
+
+`/settle` must reject the stale, pre-rekey-signed authorization. A PASS here is genuinely useful
+evidence either way — it's a confirmed result, not an assumption about which internal check would
+catch it.
+
+<Card title="Back to the full picture" icon="list" href="/invariants/overview" horizontal />

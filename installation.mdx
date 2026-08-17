@@ -1,0 +1,101 @@
+---
+title: Installation
+description: "Detailed setup options for running Ward locally, via Docker, or as a global CLI."
+---
+
+The [Quickstart](/quickstart) covers the fastest path from clone to a finished report. This page
+covers the options and edge cases around it.
+
+## Requirements
+
+| Requirement | Version | Why |
+|---|---|---|
+| Node.js | `>= 20` | Set in `package.json`'s `engines` field; Ward's ESM build targets Node 20+. |
+| Docker + Docker Compose | Any recent version | Self-hosts the facilitator via `docker-compose.yml`. |
+| npm | Bundled with Node | Used for install/build/test scripts. |
+
+Ward does **not** require the AlgoKit CLI or a LocalNet install — it targets Algorand TestNet by
+default over public algod endpoints. See
+[D5](/reference/decision-log#d5-ward-is-not-an-algokit-templated-project) and
+[D4](/reference/decision-log#d4-network-target-testnet-not-localnet) in the decision log for why.
+
+## Install from source
+
+```bash
+git clone <your-fork-or-clone-url> ward
+cd ward
+npm install
+```
+
+### Development mode (no build step)
+
+`npm run ward -- <command>` and `npm run dev` both run the CLI directly from TypeScript source via
+[`tsx`](https://github.com/privatenumber/tsx) — no compile step needed while iterating.
+
+```bash
+npm run ward -- test
+npm run ward -- fuzz A1
+```
+
+### Compiled mode
+
+```bash
+npm run build   # tsc -p tsconfig.json → dist/
+```
+
+This produces `dist/cli/index.js`, which is exactly what `package.json`'s `bin.ward` field points
+at. After building, you can invoke the compiled CLI directly:
+
+```bash
+node dist/cli/index.js test
+```
+
+### Install the `ward` binary globally
+
+```bash
+npm run build
+npm link
+ward init
+ward test
+```
+
+`npm link` uses the `bin` entry in `package.json` to make `ward` available on your `PATH`,
+pointing at the compiled `dist/cli/index.js`.
+
+## Type-checking and unit tests
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # vitest run
+```
+
+Unit tests (`test/registry.test.ts`, `test/runner.test.ts`) cover the chain-agnostic core
+(`registry`, `runner`) without needing a live facilitator or network access — they're safe to run
+in CI on every commit, independent of the full `ward test` invariant suite.
+
+## Docker: self-hosting the facilitator
+
+`ward init` (and `docker-compose up` directly) builds and runs the facilitator using
+`docker/facilitator.Dockerfile`. That image:
+
+1. Clones `GoPlausible/x402-avm` at `branch-v2-algorand-publish` at build time (the facilitator
+   depends on internal workspace packages, so it isn't independently `npm install`-able).
+2. Runs `pnpm install && pnpm build` at the `examples/typescript` workspace root.
+3. Starts the facilitator process, exposing port `4022`.
+
+See [Self-Hosting the Facilitator](/guides/self-hosting-facilitator) for the full walkthrough,
+including every environment variable the container needs.
+
+## Environment configuration
+
+Every variable Ward reads — for the CLI, the self-hosted facilitator, and the paid verification
+server — is documented with inline comments in `.env.example` and covered in full in
+[Environment Variables](/guides/environment-variables). Copy it before doing anything else:
+
+```bash
+cp .env.example .env
+```
+
+<Card title="Next: generate and fund accounts" icon="key" href="/quickstart#3-generate-accounts" horizontal>
+  Continue with the Quickstart from account generation onward.
+</Card>

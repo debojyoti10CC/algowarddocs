@@ -1,0 +1,88 @@
+---
+title: Adding a Chain Adapter
+description: "What a second chain would need — Algorand today, anything with a ChainAdapter tomorrow."
+---
+
+Ward's chain-agnostic core exists specifically so a second settlement chain is additive work, not
+a rewrite. This page is a guide for what that would actually involve, using
+`chain-adapters/algorand/` as the reference implementation.
+
+<Warning>
+  Ward ships with exactly one chain adapter today — Algorand. This page describes the shape a new
+  one would need to take; it isn't documenting an existing multi-chain feature.
+</Warning>
+
+## The one rule
+
+`invariants/universal/*` may only ever import `core/types.ts` (the `ChainAdapter` and
+`FacilitatorClient` interfaces) and `invariants/shared.ts` — **never**
+`chain-adapters/algorand/*` or any other chain-specific module directly. This is what keeps
+"chain-agnostic core" true in practice, not just a claim in the README. See
+[Architecture](/architecture#core-contracts) for the full contract definitions.
+
+## What a new adapter implements
+
+```ts
+interface ChainAdapter {
+  chainId: string;
+  fundAccount(address: string, amount: bigint): Promise<void>;
+  buildPayment(params: PaymentParams): Promise<SignedPayload>;
+  tamperPayload(payload: SignedPayload, mutation: PayloadMutation): SignedPayload;
+  getExplorerLink(txId: string): string;
+  waitForConfirmation(txId: string): Promise<TxConfirmation>;
+}
+```
+
+<Steps>
+  <Step title="buildPayment — construct a real, correctly-signed payment">
+    Must produce whatever wire format the target chain's x402 scheme expects. Algorand's
+    implementation (`algorand-adapter.ts`) delegates to `@x402/avm`'s `ExactAvmScheme` so the
+    payload it builds is byte-identical to what a real client SDK would produce — never a
+    hand-rolled approximation.
+  </Step>
+  <Step title="tamperPayload — apply one PayloadMutation">
+    The `PayloadMutation` union (`network`, `asset`, `recipient`, `amount`, the five
+    `feePayer*` mutations, `spliceExtraTxn`, `custom`) is the vocabulary every invariant uses to
+    express "what if this field were malicious," without knowing how tampering is actually
+    implemented for a given chain. A new chain adapter needs to support at minimum the mutations
+    the universal invariants (`U1`–`U5`) use — the chain-specific `feePayer*` mutations only need
+    real support if the new chain has an equivalent sponsored-fee/atomic-group concept.
+  </Step>
+  <Step title="fundAccount, waitForConfirmation, getExplorerLink">
+    Straightforward chain-native operations — send native currency, poll for confirmation, and
+    produce a human-clickable explorer URL for evidence trails.
+  </Step>
+</Steps>
+
+## Ground truth over documentation
+
+Algorand's adapter was built by reading the **installed, compiled** `@x402/core` / `@x402/avm`
+package source directly (`.d.mts` type declarations and compiled `.mjs`), not the (looser,
+sometimes stale) reference documentation. This surfaced real divergences — for example,
+`network-ids.ts` defines its own `ALGORAND_TESTNET_CAIP2` / `ALGORAND_MAINNET_CAIP2` constants
+rather than trusting the installed package's exports, because those exports turned out to be
+truncated 33-character literals cut mid-base64, rather than the full 44-character base64-encoded
+genesis hash a valid CAIP-2 Algorand network id actually needs — confirmed against both a live
+facilitator's `/verify` rejection and algod's own `/v2/transactions/params` response. A new chain
+adapter should apply the same standard: verify wire shapes against the actual installed SDK and a
+real facilitator response, not just what a doc page says.
+
+## Writing new invariants, if the chain needs them
+
+Chain-specific correctness properties (like Algorand's `A1`–`A3`) live in
+`invariants/algorand/` today. A new chain with its own protocol-specific trust boundaries — a
+different atomic-group-like primitive, a different key-rotation mechanism — would add a parallel
+`invariants/<chain>/` directory, following the same pattern as `a1-atomic-group-integrity.ts`: cite
+a `source`, target a real, code-confirmed facilitator check, and prefer `/verify`-only sub-cases
+for malicious tamper cases so a real bug can't damage the facilitator's operational key even
+though the suite runs against a real, self-hosted instance.
+
+## Wiring it in
+
+`cli/setup.ts`'s `buildScenario()` is the only place that currently hardcodes
+`AlgorandChainAdapter`. Supporting a second chain means constructing the new adapter there
+(likely behind a config flag) and registering that chain's invariants into the same
+`InvariantRegistry` alongside the universal ones — the universal invariants themselves need no
+changes at all.
+
+<Card title="See the full contract definitions" icon="code" href="/architecture#core-contracts" horizontal />

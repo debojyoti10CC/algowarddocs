@@ -1,0 +1,58 @@
+---
+title: "Allowlist Enforcement"
+description: "GET /supported must be authoritative over what /settle will actually move."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">U4</Card>
+  <Card title="Category" icon="globe">Universal</Card>
+  <Card title="Priority" icon="circle-exclamation">Must-have</Card>
+  <Card title="Violation class" icon="triangle-exclamation">Asset Theft</Card>
+</CardGroup>
+
+## What it proves
+
+`GET /supported` is a facilitator's public declaration of exactly which networks, schemes, and
+assets it's willing to move value on. A resource server (and its client) trusts that list when
+deciding to use a facilitator at all. If `/settle` will actually process a network or asset that
+`/supported` never advertised, that declaration is decorative — a seller or attacker could push
+value through a path nobody agreed the facilitator would touch.
+
+**Source:** x402 protocol spec — `GET /supported` must be authoritative over what `/settle` will
+actually move.
+
+## How it works
+
+<Steps>
+  <Step title="Call GET /supported">
+    Records the facilitator's declared list of supported network/scheme kinds.
+  </Step>
+  <Step title="Attempt settlement against an unsupported network">
+    Builds a valid payment, then mutates its network to a syntactically valid but deliberately
+    unregistered CAIP-2 identifier (`fixture.unsupportedNetwork`), and calls `/settle`.
+  </Step>
+  <Step title="Attempt settlement against an unsupported asset">
+    Builds a fresh payment targeting an asset ID the facilitator has never listed
+    (`fixture.unsupportedAsset`), and calls `/settle`.
+  </Step>
+</Steps>
+
+## Pass condition
+
+```ts
+const passed = networkRejected && assetRejected;
+```
+
+Both the unsupported-network and unsupported-asset settlement attempts must be rejected. The
+result also records whether the tested network was actually absent from the declared
+`listedNetworks` set, so a reviewer can confirm the sub-case genuinely exercised an unadvertised
+path rather than accidentally reusing a supported one.
+
+<Note>
+  `U4`'s parsing of `/supported` is intentionally permissive — the exact key/shape names for the
+  by-network signer map weren't fully pinned down from documentation alone (see
+  [D3](/reference/decision-log#d3-api-shapes)), so this invariant asserts on **behavior**
+  (rejection) rather than on matching one assumed response shape.
+</Note>
+
+<Card title="Next: Atomic Group Integrity" icon="triangle-exclamation" href="/invariants/a1-atomic-group-integrity" horizontal />

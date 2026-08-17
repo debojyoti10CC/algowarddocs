@@ -1,0 +1,107 @@
+---
+title: Deployment
+description: "Deploying your own instance of the hosted verification service to Render."
+---
+
+`render.yaml` defines a ready-to-deploy [Render](https://render.com) web service for
+`src/server/index.ts` — Ward's paid `POST /verify-facilitator` endpoint. Render isn't required;
+the service is a plain Express app and runs anywhere Node 20 does. This page documents the Render
+path since it's what's checked in.
+
+## render.yaml
+
+```yaml
+services:
+  - type: web
+    name: ward-verify
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node dist/server/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: WARD_NETWORK
+        value: testnet
+      - key: ALGOD_TESTNET_URL
+        value: https://testnet-api.algonode.cloud
+      - key: USDC_ASSET_ID
+        value: "10458941"
+      - key: PAYMENT_FACILITATOR_URL
+        value: https://facilitator.goplausible.xyz
+      - key: SERVER_PAY_TO_ADDRESS
+        sync: false
+      - key: WARD_CLIENT_PRIVATE_KEY
+        sync: false
+      - key: WARD_PAYTO_ADDRESS
+        sync: false
+      - key: WARD_PAYTO_PRIVATE_KEY
+        sync: false
+      - key: WARD_FUNDER_PRIVATE_KEY
+        sync: false
+```
+
+## Deploy steps
+
+<Steps>
+  <Step title="Connect the repository">
+    In the Render dashboard, create a new **Blueprint** from your fork/clone — Render reads
+    `render.yaml` automatically and provisions the `ward-verify` web service.
+  </Step>
+  <Step title="Set the sync: false secrets">
+    Every variable marked `sync: false` is deliberately excluded from `render.yaml` (never
+    committed) and must be set by hand in the Render dashboard's environment settings:
+
+    | Variable | Purpose |
+    |---|---|
+    | `SERVER_PAY_TO_ADDRESS` | The Algorand address that receives this service's own $1.00-per-call revenue. |
+    | `WARD_CLIENT_PRIVATE_KEY` | The probing identity Ward signs test payments from against whatever facilitator a customer submits. |
+    | `WARD_PAYTO_ADDRESS` | The seller/resource-owner stand-in Ward's probing payments are sent to. |
+    | `WARD_PAYTO_PRIVATE_KEY` | Only needed if you want it auto-opted into the test ASA. |
+    | `WARD_FUNDER_PRIVATE_KEY` | Funds `WARD_CLIENT` and A3's disposable throwaway accounts. |
+
+    See [Environment Variables](/guides/environment-variables) for how to generate all of these.
+  </Step>
+  <Step title="Deploy">
+    Render runs `npm install && npm run build`, then starts the service with
+    `node dist/server/index.js`. It self-reports healthy via `GET /health`.
+  </Step>
+  <Step title="Confirm">
+    Visit your deployed URL's `GET /` — you should see the service metadata response documented
+    in the [API Reference](/server/api-reference).
+  </Step>
+</Steps>
+
+## Two ports, two purposes
+
+<Note>
+  Render (and most PaaS hosts) assigns the listen port via the `PORT` environment variable and
+  expects the app to bind to it. `SERVER_PORT` in `.env.example` is only used for local
+  development, where nothing else claims a port for you — the server falls back to `PORT`, then
+  `SERVER_PORT`, then `4030`.
+</Note>
+
+## Why PAYMENT_FACILITATOR_URL defaults to the public facilitator
+
+The facilitator that gets **paid** for this service's own endpoint
+(`PAYMENT_FACILITATOR_URL`) defaults to the public `https://facilitator.goplausible.xyz` rather
+than a self-hosted one, specifically because a deployed instance (e.g. on Render) can't reach
+`localhost:4022` on whatever machine happens to be running `docker-compose up`. Point this at your
+own reachable, self-hosted facilitator instead if you deploy one somewhere publicly accessible —
+see [Self-Hosting the Facilitator](/guides/self-hosting-facilitator).
+
+This is entirely independent of which facilitator gets **tested** — that's always whatever URL a
+customer submits in the request body, per call. See
+[Verification API Overview](/server/overview#two-separate-facilitators-are-in-play) for the full
+distinction.
+
+## Scaling beyond TestNet
+
+The current server is TestNet-only by design — the funded `WARD_*` accounts back every probing
+payment it makes on a customer's behalf, and several invariants genuinely settle real transactions
+as part of the check. Supporting a real MainNet facilitator would need its own funded MainNet
+probing accounts and a deliberate spend-cap/consent pass before going live — that isn't wired up in
+`src/server/index.ts` today.
+
+<Card title="Back to the API surface" icon="code" href="/server/api-reference" horizontal />

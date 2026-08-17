@@ -1,0 +1,102 @@
+---
+title: "ward test"
+description: "Run the full invariant suite and write a JSON report."
+---
+
+## Usage
+
+```bash
+ward test
+# or, from source:
+npm run ward -- test
+```
+
+## What it does
+
+<Steps>
+  <Step title="Builds the scenario">
+    Loads config, constructs the chain adapter and facilitator client, and registers all eight
+    invariants via `buildScenario()`.
+  </Step>
+  <Step title="Runs every invariant sequentially">
+    `runInvariants(invariants, ctx, { concurrent: false })` executes `U1`, `U4`, `U2`, `U3`,
+    `A1`, `U5`, `A2`, `A3` in that order (see [D6](/reference/decision-log#d6-invariant-build-order)
+    for why), catching and recording a failure per-invariant rather than aborting the whole run on
+    one exception.
+  </Step>
+  <Step title="Renders a terminal report">
+    Prints a table grouped by category (`universal` / `algorand`), each row showing a PASS/FAIL
+    badge, invariant id and name, duration, and a one-line evidence summary.
+  </Step>
+  <Step title="Writes the JSON report">
+    Writes both `reports/ward-report-<ISO-timestamp>.json` (a permanent, timestamped record) and
+    `reports/latest.json` (always overwritten with the most recent run, read by `ward report`).
+  </Step>
+  <Step title="Sets the exit code">
+    Exits non-zero if any **must-have** invariant (`U1`, `U2`, `U3`, `U4`, `A1`) failed — safe to
+    gate CI on. Stretch invariant failures (`U5`, `A2`, `A3`) are reported but don't affect the
+    exit code.
+  </Step>
+</Steps>
+
+## Example output
+
+```
+Ward report — self-hosted x402-avm facilitator (GoPlausible) (algorand-testnet)
+run 7c1e...-...4f2a · 2026-08-17T09:12:03.441Z
+
+UNIVERSAL
+  PASS  U1  verify/settle consistency under post-verify mutation  (1834ms)
+        network: OK, asset: OK, recipient: OK, amount: OK
+  PASS  U2  retry safety  (2210ms)
+        all 3 retries converged on a single transaction (ABCD...) — no double-settlement
+  PASS  U3  concurrent double-settle  (1956ms)
+        5 concurrent /settle calls resolved to 1 distinct on-chain transaction(s), 1 HTTP-level success(es) — exactly one winner, as expected
+  PASS  U4  allowlist enforcement  (642ms)
+        unsupported network (listed=false): rejected; unsupported asset: rejected
+  PASS  U5  gas abuse resubmission  (3301ms)
+        all 5 resubmissions rejected with bounded, consistent latency (max 340ms vs first 298ms)
+
+ALGORAND
+  PASS  A1  atomic group integrity  (2143ms)
+        fee-payer leg amount > 0 ...: OK; ... : OK
+  PASS  A2  ASA opt-in precheck  (511ms)
+        verify correctly rejected before settlement would have burned a fee (...)
+  PASS  A3  rekey authorization  (2876ms)
+        settle correctly rejected the stale pre-rekey authorization (...)
+
+8/8 passed, 0 failed
+```
+
+## The written report's shape
+
+```ts
+interface WardReport {
+  runId: string;
+  timestamp: string;
+  facilitator: { name: string; commit: string; chain: string };
+  results: InvariantResult[];  // one per invariant, with full evidence
+  summary: { total: number; passed: number; failed: number; skipped: number };
+}
+```
+
+Each `InvariantResult.evidence` contains the complete, per-sub-case request/response trail for
+that invariant — the same data `ward fuzz` prints for a single invariant, just for all eight at
+once. Numeric values that are JavaScript `bigint`s (e.g. microAlgo amounts) are serialized to
+strings so the report is valid JSON.
+
+## Interpreting must-have failures in CI
+
+```bash
+npm run build && ward init && ward test
+echo "exit code: $?"
+```
+
+A non-zero exit means at least one of `U1`, `U2`, `U3`, `U4`, or `A1` failed — open the written
+report and check that invariant's `evidenceSummary` and `evidence` fields first; each cites its
+`source` so you know exactly which guarantee was violated.
+
+<Card title="Isolate a single invariant" icon="magnifying-glass" href="/cli/fuzz" horizontal>
+  Once you know which invariant failed, re-run it alone with `ward fuzz <id>` for the full,
+  verbose evidence trail.
+</Card>

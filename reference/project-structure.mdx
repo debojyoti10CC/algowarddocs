@@ -1,0 +1,78 @@
+---
+title: Project Structure
+description: "A directory-by-directory map of the Ward repository."
+---
+
+```
+ward/
+├── src/
+│   ├── cli/                    Commander entrypoint + init/test/fuzz/report commands
+│   │   ├── index.ts               Registers all four commands, shared error handling
+│   │   ├── setup.ts               buildScenario() — the shared construction path every command uses
+│   │   ├── init.ts, test.ts, fuzz.ts, report.ts
+│   │
+│   ├── core/                   Chain-agnostic contracts and execution engine
+│   │   ├── types.ts               Invariant, ChainAdapter, FacilitatorClient, wire shapes
+│   │   ├── registry.ts            InvariantRegistry — register/lookup invariants by id
+│   │   ├── runner.ts              runInvariants() — executes a registry against a ScenarioContext
+│   │   ├── report-engine.ts       buildReport(), writeReport(), renderTerminalReport()
+│   │   └── report-summary.ts      summarizeReport() — compact, customer-facing report shape
+│   │
+│   ├── facilitator-client/     Thin HTTP wrapper over any facilitator's REST API
+│   │   ├── client.ts              HttpFacilitatorClient — implements FacilitatorClient
+│   │   └── types.ts
+│   │
+│   ├── invariants/
+│   │   ├── shared.ts              makeResult() — shared result-building helper
+│   │   ├── universal/             U1–U5 — import only core/types.ts + shared.ts
+│   │   └── algorand/               A1–A3 — the only files allowed to import chain-adapters/algorand
+│   │
+│   ├── chain-adapters/
+│   │   └── algorand/
+│   │       ├── algorand-adapter.ts   Implements ChainAdapter for Algorand
+│   │       ├── network-ids.ts        Correct CAIP-2 network identifiers
+│   │       ├── atomic-group.ts       Decode/re-encode transaction groups for tampering
+│   │       ├── tx-builder.ts         Hand-built transaction helpers
+│   │       ├── asa.ts                ASA opt-in helpers (used by A2)
+│   │       └── rekey.ts              On-chain rekey + revert helpers (used by A3)
+│   │
+│   ├── server/
+│   │   └── index.ts               The paid, x402-gated /verify-facilitator HTTP service
+│   │
+│   └── util/
+│       ├── config.ts              loadConfig() — reads and validates .env into WardConfig
+│       ├── evidence.ts            EvidenceCollector — records every request/response pair
+│       ├── logger.ts              createLogger()
+│       └── timing.ts              sleep(), dispatchConcurrently()
+│
+├── scripts/
+│   ├── fund-accounts.ts           Generates every keypair .env needs, prints funding instructions
+│   ├── opt-in-usdc.ts             Opts a given account into the test ASA
+│   ├── pay-and-verify.ts          Standalone script exercising a real payment
+│   └── verify-manual-payment.ts   The manual-payment check ward init also runs
+│
+├── test/
+│   ├── registry.test.ts           Unit tests for core/registry.ts
+│   └── runner.test.ts             Unit tests for core/runner.ts
+│
+├── docker/
+│   └── facilitator.Dockerfile     Builds the real, unmodified x402-avm facilitator
+├── docker-compose.yml             Self-hosts the facilitator on port 4022
+├── render.yaml                    Render Blueprint for the hosted verification server
+│
+├── .env.example                   Every environment variable, documented inline
+├── DECISIONS.md                   Append-only log of every judgment call made building Ward
+├── README.md
+└── reports/
+    ├── latest.json                 Always the most recent ward test run
+    └── ward-report-<timestamp>.json  One permanent record per run
+```
+
+## The rule that keeps the core chain-agnostic
+
+`invariants/universal/*` may only ever import `core/types.ts` and `invariants/shared.ts` — never
+`chain-adapters/algorand/*` directly. Only `invariants/algorand/*` is allowed to import
+Algorand-specific code. See [Architecture](/architecture) for the full reasoning and how a second
+chain would extend this layout.
+
+<Card title="Understand how these pieces execute together" icon="diagram-project" href="/architecture" horizontal />

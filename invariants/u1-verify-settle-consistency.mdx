@@ -1,0 +1,63 @@
+---
+title: "Verify/Settle Consistency"
+description: "A facilitator must never settle terms it never actually verified."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">U1</Card>
+  <Card title="Category" icon="globe">Universal</Card>
+  <Card title="Priority" icon="circle-exclamation">Must-have</Card>
+  <Card title="Violation class" icon="triangle-exclamation">Free Shopping, Asset Theft</Card>
+</CardGroup>
+
+## What it proves
+
+`/verify` and `/settle` are supposed to agree on the terms of a payment. If a client can get
+`/verify` to approve one set of terms and then get `/settle` to actually execute a *different*
+set, `/verify`'s approval was meaningless — a client could show a resource server one thing and
+have the facilitator honor another.
+
+**Source:** x402 protocol spec (verify/settle contract); USENIX Security '26 facilitator study —
+Free Shopping & Asset Theft violation classes.
+
+## How it works
+
+For each of four fields, Ward:
+
+1. Builds one valid, correctly-signed payload.
+2. Calls `/verify` on the **unmutated** payload — this should be approved.
+3. Mutates a single field of the *already-verified* payload.
+4. Calls `/settle` on the mutated version.
+
+A correct facilitator must reject the mutated settlement (or settle only the terms it actually
+verified) every time.
+
+## Sub-cases
+
+| Field mutated | What it simulates |
+|---|---|
+| `network` | Swap to a syntactically valid but different network (e.g. mainnet's CAIP-2 id in place of testnet's) after verification. |
+| `asset` | Swap to an asset ID the client never agreed to pay in. |
+| `recipient` | Redirect the payment to the client's own address instead of the seller's. |
+| `amount` | Inflate the settled amount to 1000x the verified amount. |
+
+If the baseline `/verify` call rejects before a mutation is even applied, that sub-case is recorded
+as inconclusive (`ok: false` with a distinguishing detail) rather than silently skipped — it means
+the environment couldn't exercise the intended condition, which is itself worth surfacing.
+
+## Pass condition
+
+All four sub-cases must reject at `/settle`. Ward's assertion, roughly:
+
+```ts
+const passed = subResults.length > 0 && subResults.every((r) => r.ok);
+```
+
+## Reading a failure
+
+A `VIOLATION` on any sub-case means `/settle` accepted terms that were never the ones `/verify`
+approved — check the `evidence` field of the result for the exact `original` (verified) and
+`tampered` (settled) payloads, plus the facilitator's raw `/settle` response, including the
+resulting `transaction` id if one was minted.
+
+<Card title="Next: Retry Safety" icon="arrow-rotate-right" href="/invariants/u2-retry-safety" horizontal />

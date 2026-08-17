@@ -1,0 +1,57 @@
+---
+title: "ASA Opt-In Precheck"
+description: "A doomed-to-fail settlement should be caught at /verify, not burn a real on-chain fee at /settle."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">A2</Card>
+  <Card title="Category" icon="link">Algorand</Card>
+  <Card title="Priority" icon="circle-dashed">Stretch</Card>
+  <Card title="Violation class" icon="triangle-exclamation">Service Denial (efficiency)</Card>
+</CardGroup>
+
+## What it proves
+
+Algorand requires an account to explicitly **opt in** before it can receive a given Algorand
+Standard Asset (ASA) — a transfer to a non-opted-in account fails on-chain. A facilitator that only
+discovers this at broadcast time burns a real transaction fee settling a payment that was always
+going to fail. A2 asserts the facilitator catches this earlier, at `/verify` time.
+
+**Source:** Algorand ASA opt-in requirement (protocol primitive); early detection vs. wasted
+on-chain fees.
+
+## How it works
+
+<Steps>
+  <Step title="Generate a fresh account">
+    A brand-new keypair that has never opted into the test ASA (TestNet USDC) is confirmed
+    not opted in via a direct account-info lookup.
+  </Step>
+  <Step title="Build a payment targeting it">
+    A normal, correctly-signed payment from the funded client account to this never-opted-in
+    address.
+  </Step>
+  <Step title="Call /verify">
+    A facilitator whose `/verify` step runs a full algod simulation (`simulateTransactionGroup` —
+    see [D7](/reference/decision-log#d7-ground-truth-pulled-from-the-installed-package-source-not-just-docs))
+    catches the doomed transfer before any real settlement attempt.
+  </Step>
+</Steps>
+
+## Pass condition
+
+```ts
+const passed = !optedIn && caughtEarly;
+```
+
+Both the generated account's opt-in status must genuinely be `false` (otherwise the sub-case
+didn't test the intended condition at all — reported distinctly rather than silently passing), and
+`/verify` must reject the payment.
+
+## Reading a failure
+
+If `/verify` approves a payment to a non-opted-in recipient, the facilitator would burn a real fee
+discovering the failure only at `/settle` — reported as *"verify APPROVED a payment to a
+non-opted-in recipient — this would fail on-chain and waste a real settlement attempt."*
+
+<Card title="Next: Rekey Authorization" icon="key" href="/invariants/a3-rekey-authorization" horizontal />

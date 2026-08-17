@@ -1,0 +1,83 @@
+---
+title: Troubleshooting
+description: "Common failure modes across setup, ward init, ward test, and the hosted API."
+---
+
+## Setup and accounts
+
+<AccordionGroup>
+  <Accordion title="Where do I get TestNet ALGO / USDC?">
+    Run `npx tsx scripts/fund-accounts.ts` to generate every keypair, then fund exactly two of
+    them by hand — `WARD_FUNDER` and the address for `AVM_PRIVATE_KEY` — via the
+    [ALGO dispenser](https://bank.testnet.algorand.network/). Both TestNet dispensers are
+    captcha-gated web forms, so this one step genuinely can't be automated end to end. Once
+    `WARD_FUNDER` is funded, it auto-funds every other account Ward needs — this is a one-time
+    step per environment, not per run.
+  </Accordion>
+  <Accordion title="ward init hangs waiting for the facilitator to become healthy">
+    Check `docker compose logs facilitator`. The most common cause is a missing or malformed
+    `AVM_PRIVATE_KEY`, `EVM_PRIVATE_KEY`, or `SVM_PRIVATE_KEY` — the upstream facilitator image
+    exits immediately at startup if any of the three is absent, even though Ward only exercises
+    the Algorand scheme. See [Environment Variables](/guides/environment-variables).
+  </Accordion>
+  <Accordion title="docker compose up failed — is Docker running?">
+    Start Docker Desktop (or your Docker daemon) before running `ward init`. Confirm with
+    `docker info`.
+  </Accordion>
+</AccordionGroup>
+
+## Running the suite
+
+<AccordionGroup>
+  <Accordion title="Manual verification payment was rejected at /verify">
+    Almost always unfunded or non-opted-in accounts. Confirm the address for
+    `WARD_CLIENT_PRIVATE_KEY` has TestNet ALGO for fees and is opted into the TestNet USDC ASA
+    (`10458941` by default) — `ward init` opts it in automatically when
+    `WARD_FUNDER_PRIVATE_KEY` is set.
+  </Accordion>
+  <Accordion title="Manual verification payment failed at /settle">
+    Check the printed `errorReason` / `errorMessage`. A common cause is an underfunded
+    `AVM_PRIVATE_KEY` address — it needs its own TestNet ALGO balance to co-sign the
+    sponsored-fee leg at settle time.
+  </Accordion>
+  <Accordion title="A3 (rekey authorization) reports a stranded account">
+    A3 always reverts its rekey in a `finally` block, but if the process crashes or loses network
+    mid-run before the revert executes, the disposable throwaway account it generated is left
+    permanently controlled by a discarded key. This is logged loudly
+    (`ctx.logger.warn`) rather than silently swallowed — A3 always runs on a brand-new, purpose-
+    funded throwaway account (never your shared `WARD_CLIENT`), specifically so this failure mode
+    can never strand the account every other invariant depends on.
+  </Accordion>
+  <Accordion title="A stretch invariant (U5, A2, A3) failed but ward test still exited 0">
+    That's expected. Only the five must-have invariants (`U1`, `U2`, `U3`, `U4`, `A1`) affect the
+    exit code — stretch invariants still run and report every time, but a narrower or less
+    universal failure there doesn't fail CI. See
+    [Must-have vs. stretch](/invariants/overview#must-have-vs-stretch).
+  </Accordion>
+  <Accordion title="I want the full stack trace on a CLI error">
+    Set `WARD_DEBUG=1` in your environment — the default error handler otherwise prints only a
+    short `ward: <message>` line.
+
+    ```bash
+    WARD_DEBUG=1 npm run ward -- test
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Hosted Verification API
+
+<AccordionGroup>
+  <Accordion title="POST /verify-facilitator returns 502">
+    The payment succeeded, but the check against the submitted `facilitatorUrl` couldn't
+    complete — usually because that URL is unreachable, or its `/verify`/`/settle`/`/supported`
+    endpoints don't match the expected shapes. The `error` field in the response includes the
+    underlying message.
+  </Accordion>
+  <Accordion title="I keep getting 402 even after paying">
+    Confirm your client is retrying the *same* request with a valid `PAYMENT-SIGNATURE` header
+    attached, built from the `accepts` array in the original `402` response body — not a fresh
+    request with no payment context at all.
+  </Accordion>
+</AccordionGroup>
+
+<Card title="Still stuck? Check the reasoning behind a specific design choice" icon="book" href="/reference/decision-log" horizontal />

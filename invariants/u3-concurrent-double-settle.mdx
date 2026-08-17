@@ -1,0 +1,50 @@
+---
+title: "Concurrent Double-Settle"
+description: "Simultaneous settlement races must never mint more than one on-chain transaction."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">U3</Card>
+  <Card title="Category" icon="globe">Universal</Card>
+  <Card title="Priority" icon="circle-exclamation">Must-have</Card>
+  <Card title="Violation class" icon="triangle-exclamation">Free Shopping, Asset Theft</Card>
+</CardGroup>
+
+## What it proves
+
+U2 tests *sequential* retries. U3 targets a different, harder bug class: a check-then-act
+idempotency guard that's perfectly safe when requests arrive one at a time, but has a race window
+under true concurrency — for example, two requests both passing a "has this been settled yet?"
+check before either one records that it's claimed the settlement.
+
+**Source:** USENIX Security '26 facilitator study — concurrency races enabling double-settlement
+(Free Shopping / Asset Theft).
+
+## How it works
+
+Ward builds one signed payload, then fires **five simultaneous** `/settle` requests for it,
+released from a single shared gate (`util/timing.ts`'s `dispatchConcurrently`) rather than relying
+on incidental network jitter — so the race is reproducible run to run, not a matter of luck.
+
+## Pass condition
+
+The safety-critical assertion is the same as U2's — at most one **distinct** on-chain transaction
+id may result, since identical signed bytes hash to the same txid deterministically:
+
+```ts
+const distinctTxns = new Set(successes.map(o => o.value?.transaction).filter(Boolean));
+const passed = distinctTxns.size <= 1;
+```
+
+Ward additionally records (as informative, non-blocking context) whether *exactly one* HTTP-level
+success occurred — a facilitator with a correctly implemented concurrency lock should have exactly
+one request "win" the claim, rather than every request racing algod directly and each echoing
+success on the same eventual transaction. Both outcomes are reported, but only the distinct-txn
+count gates pass/fail — see
+[D12](/reference/decision-log#d12-u2u3s-retry-safety-assertion-is-no-distinct-double-settlement-not-literally-success-exactly-once).
+
+When exactly one distinct transaction results, Ward also calls
+`ChainAdapter.waitForConfirmation()` on it and records the real on-chain confirmation as
+additional evidence.
+
+<Card title="Next: Allowlist Enforcement" icon="list-check" href="/invariants/u4-allowlist-enforcement" horizontal />

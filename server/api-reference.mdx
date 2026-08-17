@@ -1,0 +1,133 @@
+---
+title: API Reference
+description: "Every endpoint the hosted verification service exposes."
+---
+
+## Base URL
+
+Use your own deployed instance's URL (see [Deployment](/server/deployment)), or the operator's
+hosted instance if you're a customer rather than a self-hoster.
+
+## Authentication
+
+None beyond x402 payment itself — `POST /verify-facilitator` is gated by the
+[x402 payment protocol](https://x402.gitbook.io/x402), not an API key. `GET /` and `GET /health`
+are unauthenticated.
+
+---
+
+## `GET /`
+
+Service metadata — a human-readable description of what this instance does and how to call it.
+
+<ResponseExample>
+```json 200
+{
+  "name": "Ward — facilitator verification service",
+  "description": "Pay once, get a real adversarial-test report on whether an x402 facilitator honors its correctness invariants.",
+  "endpoints": {
+    "verify": "POST /verify-facilitator { facilitatorUrl: string } — $1.00",
+    "health": "GET /health"
+  }
+}
+```
+</ResponseExample>
+
+---
+
+## `GET /health`
+
+Liveness check — used as this service's own health check path when deployed (see
+[Deployment](/server/deployment)).
+
+<ResponseExample>
+```json 200
+{ "status": "ok" }
+```
+</ResponseExample>
+
+---
+
+## `POST /verify-facilitator`
+
+Runs Ward's full guarantee suite — all eight correctness properties (`U1`–`U5`, `A1`–`A3`) —
+against a facilitator URL you provide, and returns a pass/fail report with reproducible evidence.
+
+<ParamField body="facilitatorUrl" type="string" required>
+  The base URL of the x402 facilitator to test — e.g. `https://your-facilitator.example.com`.
+  Must implement the standard `/verify`, `/settle`, and `/supported` endpoints.
+</ParamField>
+
+### Pricing
+
+<CardGroup cols={3}>
+  <Card title="Price" icon="dollar-sign">$1.00 per call</Card>
+  <Card title="Scheme" icon="link">`exact`</Card>
+  <Card title="Network" icon="globe">Algorand TestNet</Card>
+</CardGroup>
+
+Payment is enforced by `@x402/express`'s `paymentMiddleware()` — a request without a valid
+`PAYMENT-SIGNATURE` header receives a standard x402 `402 Payment Required` response describing the
+exact payment requirements; retry the same request with a valid signed payment attached, exactly
+as any x402-compliant client would.
+
+The route is tagged `extra: { tag: "x402-global-challenge" }` for Bazaar/leaderboard attribution,
+and is registered with `declareDiscoveryExtension` so it's discoverable through the payment
+facilitator's `/discovery/resources` catalog once a real payment has settled through it.
+
+### Success response
+
+<ResponseExample>
+```json 200
+{
+  "ok": true,
+  "report": {
+    "runId": "b3f2b6b0-...-...",
+    "timestamp": "2026-08-17T09:12:03.441Z",
+    "facilitator": { "name": "https://your-facilitator.example.com", "commit": "unknown", "chain": "algorand-testnet" },
+    "summary": { "total": 8, "passed": 8, "failed": 0, "skipped": 0 },
+    "mustHaveIds": ["U1", "U2", "U3", "U4", "A1"],
+    "results": [
+      {
+        "id": "A1",
+        "name": "atomic group integrity",
+        "category": "algorand",
+        "passed": true,
+        "mustHave": true,
+        "evidenceSummary": "fee-payer leg amount > 0 ...: OK; ...",
+        "durationMs": 2143,
+        "source": "Algorand atomic transaction groups + @x402/avm's verifyFeePayerTransaction; all four USENIX violation classes",
+        "detail": { "rows": [ { "label": "...", "ok": true, "detail": "...", "tag": "Asset Theft" } ] }
+      }
+    ]
+  }
+}
+```
+</ResponseExample>
+
+The `report` body is a `ReportSummary` (see `src/core/report-summary.ts`) — a compact,
+customer-facing reduction of the full `WardReport` the CLI writes to `reports/latest.json`. It
+strips raw wire payloads and msgpack blobs down to human-readable `rows`/`facts` per invariant
+while keeping every pass/fail result, its `source` citation, and its `mustHave` status.
+
+### Error responses
+
+<ResponseExample>
+```json 400
+{ "ok": false, "error": "facilitatorUrl (string) is required in the request body" }
+```
+```json 402
+{ "x402Version": 2, "error": "payment required", "accepts": [ { "scheme": "exact", "network": "algorand:...", "payTo": "...", "asset": "...", "amount": "1000000", "maxTimeoutSeconds": 60, "extra": { "tag": "x402-global-challenge" } } ] }
+```
+```json 502
+{ "ok": false, "error": "Could not complete the check against https://your-facilitator.example.com: <underlying error message>" }
+```
+</ResponseExample>
+
+| Status | Meaning |
+|---|---|
+| `400` | `facilitatorUrl` was missing or not a string. |
+| `402` | Standard x402 payment-required response — no valid payment attached yet. |
+| `502` | Payment succeeded, but the check itself couldn't complete — e.g. the submitted `facilitatorUrl` was unreachable or returned malformed responses. |
+
+<Card title="Deploy your own instance" icon="cloud-arrow-up" href="/server/deployment" horizontal />

@@ -1,0 +1,68 @@
+---
+title: "ward fuzz <id>"
+description: "Run one invariant in isolation with full, verbose evidence output."
+---
+
+## Usage
+
+```bash
+ward fuzz A1
+ward fuzz u2   # ids are case-insensitive — normalized to uppercase internally
+# or, from source:
+npm run ward -- fuzz A1
+```
+
+## What it does
+
+Runs a single invariant end to end, in `debug` log level, and prints:
+
+1. The invariant's id, name, `source` citation, and category.
+2. A `PASS`/`FAIL` badge and duration.
+3. Its `evidenceSummary` — the same one-line summary `ward test`'s table shows.
+4. The **full** `evidence` object, pretty-printed as JSON — every request sent and response
+   received for every sub-case, unredacted.
+
+This is the fastest way to see exactly what payload Ward built, exactly what mutation was applied,
+and exactly how the facilitator responded — the detail `ward test`'s compact table intentionally
+leaves out.
+
+## Valid invariant ids
+
+`U1`, `U2`, `U3`, `U4`, `U5`, `A1`, `A2`, `A3` — see the full [Invariants Overview](/invariants/overview).
+
+## Example output
+
+```
+$ ward fuzz A1
+
+Fuzzing A1 — atomic group integrity
+Algorand atomic transaction groups (protocol primitive) + @x402/avm facilitator's
+verifyFeePayerTransaction; USENIX Security '26 study — Free Shopping, Asset Theft,
+Service Denial, Gas Abuse
+category: algorand
+
+Result: PASS (2143ms)
+fee-payer leg amount > 0 (drains value instead of a pure self-payment): OK;
+fee-payer leg receiver redirected away from self: OK;
+fee-payer leg closes remainder balance to a third party: OK;
+fee-payer leg rekeys the facilitator's own account: OK;
+fee-payer leg fee inflated far past the reasonable cap: OK
+
+--- evidence ---
+{
+  "baselineTransaction": "ABCD1234...",
+  "subResults": [ ... ],
+  "evidence": [
+    { "label": "GET /supported (discovering fee-payer address)", "request": null, "response": { ... } },
+    { "label": "baseline sponsored-fee settle (sanity check)", "request": { ... }, "response": { ... } },
+    { "label": "verify — fee-payer leg amount > 0 ...", "request": { "original": { ... }, "tampered": { ... } }, "response": { ... } }
+  ]
+}
+```
+
+## Exit code
+
+Exits non-zero if the invariant failed — useful for scripting a one-off check without running the
+whole suite, e.g. in a bisecting workflow while debugging a facilitator change.
+
+<Card title="Re-render a full past run" icon="table" href="/cli/report" horizontal />

@@ -1,0 +1,78 @@
+---
+title: How Verification Works
+description: "The eight correctness guarantees Ward checks, and where each one comes from."
+---
+
+An **invariant** is a property that must hold no matter what a malicious or careless client does.
+Ward compiles each one into a self-contained, executable test: build a real payment, optionally
+tamper with it in one specific way, submit it to a real facilitator, and assert the response is
+correct.
+
+Every invariant's `source` field — visible in `ward test` / `ward fuzz` output and in the JSON
+report — cites exactly what it's checking against, so a PASS or FAIL is always traceable back to
+either the x402 protocol spec, the USENIX Security '26 facilitator study, or a specific Algorand
+protocol primitive.
+
+## The full set
+
+| ID | Name | Category | Priority | USENIX class(es) |
+|---|---|---|---|---|
+| [U1](/invariants/u1-verify-settle-consistency) | Verify/settle consistency | universal | **must-have** | Free Shopping, Asset Theft |
+| [U2](/invariants/u2-retry-safety) | Retry safety | universal | **must-have** | Free Shopping |
+| [U3](/invariants/u3-concurrent-double-settle) | Concurrent double-settle | universal | **must-have** | Free Shopping, Asset Theft |
+| [U4](/invariants/u4-allowlist-enforcement) | Allowlist enforcement | universal | **must-have** | Asset Theft |
+| [A1](/invariants/a1-atomic-group-integrity) | Atomic group integrity | algorand | **must-have — headline** | all four |
+| [U5](/invariants/u5-gas-abuse-resubmission) | Gas abuse resubmission | universal | stretch | Gas Abuse |
+| [A2](/invariants/a2-asa-optin-precheck) | ASA opt-in precheck | algorand | stretch | Service Denial (efficiency) |
+| [A3](/invariants/a3-rekey-authorization) | Rekey authorization | algorand | stretch | Asset Theft (authorization) |
+
+## Must-have vs. stretch
+
+`ward test` exits **non-zero** if any **must-have** invariant fails (`U1`, `U2`, `U3`, `U4`, `A1` —
+see `MUST_HAVE_IDS` in `src/cli/setup.ts`), making it safe to gate a CI pipeline or a release
+process on. Stretch invariants (`U5`, `A2`, `A3`) still run and report every time, but a failure
+there doesn't fail the overall run — they cover real but narrower correctness properties (bounded
+rejection cost, early opt-in detection, post-rekey authorization) that matter less universally than
+the five must-haves.
+
+## Universal vs. Algorand-specific
+
+<CardGroup cols={2}>
+  <Card title="Universal (U1–U5)" icon="globe">
+    Import only `core/types.ts` and `invariants/shared.ts`. They express properties every x402
+    facilitator must satisfy regardless of settlement chain — verify/settle consistency, retry
+    safety, concurrency safety, allowlist enforcement, and bounded rejection cost.
+  </Card>
+  <Card title="Algorand (A1–A3)" icon="link">
+    The only invariants allowed to import `chain-adapters/algorand/*`. They express properties
+    specific to Algorand's transaction model — atomic transaction groups, ASA opt-in semantics,
+    and account rekeying.
+  </Card>
+</CardGroup>
+
+## Reading a result
+
+Every invariant produces an `InvariantResult`:
+
+```ts
+interface InvariantResult {
+  id: string;
+  name: string;
+  category: "universal" | "algorand";
+  passed: boolean;
+  evidenceSummary: string;
+  evidence: unknown;       // full request/response trail, per sub-case
+  durationMs: number;
+  timestamp: string;
+}
+```
+
+`evidence` is never a black box — it's the literal request bodies sent and response bodies
+received for every sub-case an invariant runs, collected via `util/evidence.ts`'s
+`EvidenceCollector`. `ward fuzz <id>` prints this in full; `ward test`'s table shows a compact
+`evidenceSummary`, with the full trail available in the written JSON report.
+
+<Card title="Start with the headline invariant" icon="triangle-exclamation" href="/invariants/a1-atomic-group-integrity" horizontal>
+  A1 is the sharpest, most Algorand-specific test in the suite — read it first to see what
+  "adversarial" actually means in Ward's context.
+</Card>

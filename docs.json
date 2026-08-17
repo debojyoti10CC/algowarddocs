@@ -1,0 +1,165 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Ward",
+  "description": "Adversarial assurance for x402 payment facilitators on Algorand.",
+  "colors": {
+    "primary": "#00BF63",
+    "light": "#2ED47E",
+    "dark": "#00954D"
+  },
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo/light.png",
+    "dark": "/logo/dark.png",
+    "href": "/"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Start Here",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "index"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "pages": [
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "How Ward Is Built",
+            "pages": [
+              "architecture"
+            ]
+          },
+          {
+            "group": "Where to Go Next",
+            "pages": [
+              "invariants/overview",
+              "cli/overview",
+              "server/overview"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Correctness Guarantees",
+        "groups": [
+          {
+            "group": "How Verification Works",
+            "pages": [
+              "invariants/overview"
+            ]
+          },
+          {
+            "group": "Universal Guarantees",
+            "pages": [
+              "invariants/u1-verify-settle-consistency",
+              "invariants/u2-retry-safety",
+              "invariants/u3-concurrent-double-settle",
+              "invariants/u4-allowlist-enforcement",
+              "invariants/u5-gas-abuse-resubmission"
+            ]
+          },
+          {
+            "group": "Algorand-Specific Guarantees",
+            "pages": [
+              "invariants/a1-atomic-group-integrity",
+              "invariants/a2-asa-optin-precheck",
+              "invariants/a3-rekey-authorization"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Operate It",
+        "groups": [
+          {
+            "group": "Command Line",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/test",
+              "cli/fuzz",
+              "cli/report"
+            ]
+          },
+          {
+            "group": "Hosted Verification API",
+            "pages": [
+              "server/overview",
+              "server/api-reference",
+              "server/deployment"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/environment-variables",
+              "guides/self-hosting-facilitator",
+              "guides/adding-a-chain-adapter",
+              "guides/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Project Reference",
+            "pages": [
+              "reference/project-structure",
+              "reference/decision-log",
+              "reference/faq"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/debojyoti10CC/alg402",
+          "icon": "github"
+        },
+        {
+          "anchor": "X",
+          "href": "https://x.com/algoward",
+          "icon": "x-twitter"
+        },
+        {
+          "anchor": "x402 Protocol",
+          "href": "https://x402.gitbook.io/x402",
+          "icon": "book"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Support",
+        "href": "mailto:support@example.com"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "/quickstart"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/debojyoti10CC/alg402",
+      "x": "https://x.com/algoward"
+    }
+  }
+}

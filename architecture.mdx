@@ -1,0 +1,141 @@
+---
+title: Architecture
+description: "How Ward's chain-agnostic core, Algorand adapter, and invariants fit together."
+---
+
+Ward is built around one rule that keeps "chain-agnostic core" true in practice rather than just
+in the pitch: **`invariants/universal/*` may only ever import `core/types.ts` and
+`invariants/shared.ts`** — never anything under `chain-adapters/` directly. Only
+`invariants/algorand/*` is allowed to import Algorand-specific code. Supporting a second chain
+means writing a new `chain-adapters/<chain>/` and wiring it into `cli/setup.ts` — the universal
+invariants themselves don't change.
+
+## Directory layout
+
+```
+src/
+├── cli/                    commander entrypoint + init/test/fuzz/report commands
+├── core/                   chain-agnostic contracts: Invariant, ChainAdapter,
+│                           FacilitatorClient, registry, runner, report engine
+├── facilitator-client/     thin HTTP wrapper over a real facilitator's REST API
+├── invariants/
+│   ├── universal/          U1–U5 — import only core/types.ts + shared.ts
+│   └── algorand/           A1–A3 — the only files allowed to import chain-adapters/algorand
+├── chain-adapters/
+│   └── algorand/           real @x402/avm-based payload construction + tamper helpers
+├── server/                 the paid x402-gated /verify-facilitator HTTP service
+└── util/                   config, logging, evidence collection, timing helpers
+```
+
+## Core contracts
+
+Four interfaces in `src/core/types.ts` define the entire seam between "what an invariant is" and
+"what a chain provides":
+
+<AccordionGroup>
+  <Accordion title="Invariant" icon="shield-check">
+    ```ts
+    interface Invariant {
+      id: string;
+      name: string;
+      category: "universal" | "algorand";
+      source: string;
+      run: (ctx: ScenarioContext) => Promise<InvariantResult>;
+    }
+    ```
+    A self-contained, executable test. `source` cites exactly what the invariant is checking
+    against — the x402 spec, the USENIX study, or a specific facilitator code path — and is
+    surfaced verbatim in `ward test` / `ward fuzz` output and the JSON report.
+  </Accordion>
+  <Accordion title="ChainAdapter" icon="link">
+    ```ts
+    interface ChainAdapter {
+      chainId: string;
+      fundAccount(address: string, amount: bigint): Promise<void>;
+      buildPayment(params: PaymentParams): Promise<SignedPayload>;
+      tamperPayload(payload: SignedPayload, mutation: PayloadMutation): SignedPayload;
+      getExplorerLink(txId: string): string;
+      waitForConfirmation(txId: string): Promise<TxConfirmation>;
+    }
+    ```
+    Everything a chain needs to provide: build a real signed payment, deliberately corrupt one
+    field of it, fund accounts, and confirm transactions. `AlgorandChainAdapter` is the only
+    implementation today.
+  </Accordion>
+  <Accordion title="FacilitatorClient" icon="server">
+    ```ts
+    interface FacilitatorClient {
+      verify(payload: SignedPayload): Promise<VerifyResponse>;
+      settle(payload: SignedPayload): Promise<SettleResponse>;
+      supported(): Promise<SupportedResponse>;
+    }
+    ```
+    A thin, chain-agnostic HTTP wrapper (`facilitator-client/client.ts`) over any facilitator's
+    `/verify`, `/settle`, and `/supported` REST endpoints — the exact same three endpoints every
+    x402 facilitator implements regardless of which chain it settles on.
+  </Accordion>
+  <Accordion title="PayloadMutation" icon="wand-magic-sparkles">
+    A closed set of tamper operations (`network`, `asset`, `recipient`, `amount`,
+    `feePayerAmount`, `feePayerReceiver`, `feePayerCloseRemainderTo`, `feePayerRekeyTo`,
+    `feePayerFee`, `spliceExtraTxn`, `custom`) that `ChainAdapter.tamperPayload()` applies. This is
+    the vocabulary every invariant uses to express "what if this field were malicious" without
+    knowing how tampering is actually implemented on a given chain.
+  </Accordion>
+</AccordionGroup>
+
+## Execution flow
+
+<Steps>
+  <Step title="cli/setup.ts builds a Scenario">
+    Loads config from `.env`, constructs an `AlgorandChainAdapter` and `HttpFacilitatorClient`,
+    derives a `TestFixture` (funded client account, pay-to address, asset, amount) from
+    `WARD_CLIENT_PRIVATE_KEY` and friends, and registers all eight invariant factories into an
+    `InvariantRegistry`.
+  </Step>
+  <Step title="core/runner.ts executes the registry">
+    `runInvariants(registry.all(), ctx, { concurrent })` runs each `Invariant.run(ctx)`, catching
+    and recording failures per-invariant rather than aborting the whole suite on one exception.
+  </Step>
+  <Step title="Each invariant builds, tampers, and asserts">
+    A typical invariant calls `chain.buildPayment(...)` for a valid payload, optionally
+    `chain.tamperPayload(payload, mutation)` for an adversarial variant, submits both to
+    `facilitator.verify()` / `facilitator.settle()`, and asserts the facilitator's response is
+    correct — using `util/evidence.ts`'s `EvidenceCollector` to record every request/response pair
+    verbatim.
+  </Step>
+  <Step title="core/report-engine.ts + report-summary.ts render results">
+    `buildReport()` assembles all `InvariantResult`s plus run metadata (facilitator name, chain,
+    commit) into the JSON shape written to `reports/`; `summarizeReport()` produces the compact
+    pass/fail summary both the CLI table and the paid API's JSON response use.
+  </Step>
+</Steps>
+
+## The Algorand chain adapter
+
+`chain-adapters/algorand/` is where every Algorand-specific detail lives — nothing in
+`invariants/universal/*` or `core/` knows about atomic groups, ASAs, or rekeying.
+
+| File | Responsibility |
+|---|---|
+| `algorand-adapter.ts` | Implements `ChainAdapter`: builds real `ExactAvmScheme` payments via `@x402/avm`, funds accounts, waits for confirmation. |
+| `network-ids.ts` | CAIP-2 network identifiers (`ALGORAND_TESTNET_CAIP2`, `ALGORAND_MAINNET_CAIP2`) — Algorand's x402 scheme uses CAIP-2, not the informal `"algorand-testnet"` strings the generic spec examples use. |
+| `atomic-group.ts` | Decodes/re-encodes the exact same `Transaction` class instances `@x402/avm` produces, so tampering stays byte-compatible with what the facilitator will decode. |
+| `asa.ts` | ASA opt-in helpers used by `A2`. |
+| `rekey.ts` | On-chain rekey + revert helpers used by `A3`. |
+
+## Why the atomic-group order matters
+
+Algorand's gasless/sponsored-fee flow builds a 2-transaction atomic group: an **unsigned**
+fee-payer self-payment at index 0 (only the facilitator signs it, at verify/settle time) and the
+client's **signed** payment at index 1. Because index 0 is never signed by the client, it's the
+exact seam `A1` exploits — see [A1](/invariants/a1-atomic-group-integrity) and
+[D7](/reference/decision-log#d7-ground-truth-pulled-from-the-installed-package-source-not-just-docs)
+for how this was confirmed against the installed package source rather than assumed from docs.
+
+## Two consumers, one engine
+
+`src/cli/*` and `src/server/index.ts` are both thin wrappers around the exact same
+`core/`, `chain-adapters/`, and `invariants/` code — the paid verification server
+(`POST /verify-facilitator`) calls `buildScenario()`, `runInvariants()`, and `buildReport()`
+directly, just swapping which facilitator URL gets tested. See
+[Verification API](/server/overview) for how that's wired up.

@@ -1,0 +1,60 @@
+---
+title: "Retry Safety"
+description: "Retrying an unresolved settlement must never mint more than one on-chain transaction."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">U2</Card>
+  <Card title="Category" icon="globe">Universal</Card>
+  <Card title="Priority" icon="circle-exclamation">Must-have</Card>
+  <Card title="Violation class" icon="triangle-exclamation">Free Shopping</Card>
+</CardGroup>
+
+## What it proves
+
+Real clients retry. A request can time out, drop, or return an ambiguous result, and a naive
+client resends the exact same signed authorization. A facilitator that mishandles this can end up
+double-settling — moving funds twice for one client intention.
+
+**Source:** x402 protocol spec — retrying an unresolved settlement must not double-settle; USENIX
+Security '26 study — Free Shopping via naive retry handling.
+
+## How it works
+
+Ward builds one signed payload and calls `/settle` on it **three times in a row**, unmodified —
+exactly what a client blindly retrying after a perceived timeout would send.
+
+## Why "exactly one success" isn't the assertion
+
+Algorand's own txID deduplication makes replaying byte-identical signed transaction bytes to algod
+safe by construction. A facilitator that echoes `success: true` with the *same* transaction id on
+every retry hasn't caused any economic harm — it's just not being maximally strict about
+idempotency bookkeeping. See
+[D12](/reference/decision-log#d12-u2u3s-retry-safety-assertion-is-no-distinct-double-settlement-not-literally-success-exactly-once)
+for the full reasoning.
+
+The sharp, chain-grounded property U2 actually checks: repeated retries of one signed
+authorization must never resolve to more than one **distinct** on-chain transaction id.
+
+## Pass condition
+
+```ts
+const distinctSuccessfulTxns = new Set(responses.filter(r => r.success && r.transaction).map(r => r.transaction));
+const noDoubleSettlement = distinctSuccessfulTxns.size <= 1;
+
+const distinctErrorReasons = new Set(responses.filter(r => !r.success).map(r => r.errorReason ?? "unknown"));
+const failuresConsistent = distinctErrorReasons.size <= 1;
+
+const passed = noDoubleSettlement && (distinctSuccessfulTxns.size === 1 || failuresConsistent);
+```
+
+Three outcomes are all valid PASSes:
+
+1. All three retries converge on the same single transaction id.
+2. All three retries fail, with a consistent error reason (e.g. the account genuinely lacks
+   funds in this environment) — not evidence of nondeterministic double-processing.
+
+A FAIL is specifically: retries produced **more than one distinct on-chain transaction** for what
+was, from the client's perspective, one authorization.
+
+<Card title="Next: Concurrent Double-Settle" icon="clone" href="/invariants/u3-concurrent-double-settle" horizontal />

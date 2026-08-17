@@ -1,0 +1,101 @@
+---
+title: "Atomic Group Integrity"
+description: "Ward's headline invariant: the facilitator's own safety check must catch a rewritten fee-payer leg."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">A1</Card>
+  <Card title="Category" icon="link">Algorand</Card>
+  <Card title="Priority" icon="circle-exclamation">Must-have — headline</Card>
+  <Card title="Violation classes" icon="triangle-exclamation">All four USENIX classes</Card>
+</CardGroup>
+
+## Why this is the headline invariant
+
+A1 is the sharpest, most Algorand-specific test Ward runs, and the one every other invariant in
+the suite exists partly to set up context for. It targets a real, concrete trust boundary in
+Algorand's gasless/sponsored-fee flow — not a hypothetical one.
+
+## The trust boundary
+
+The facilitator's fee-abstraction flow builds a **2-transaction atomic group**:
+
+<Steps>
+  <Step title="Index 0 — the fee-payer leg, UNSIGNED by the client">
+    A self-payment by the facilitator's own fee-payer address, covering both transactions' fees.
+    The client never signs this leg — only the facilitator does, at verify/settle time.
+  </Step>
+  <Step title="Index 1 — the client's payment, SIGNED by the client">
+    The client's actual ASA transfer, with `staticFee: 0` (its fee is pooled onto index 0).
+  </Step>
+</Steps>
+
+Because index 0 is never signed by the client, an attacker who intercepts the payload *after* the
+client signs their own leg can rewrite the fee-payer leg arbitrarily — inflate its amount, redirect
+its receiver, attach a rekey or close-out, inflate its fee — while keeping the original `group`
+field intact, so the separate group-ID-consistency check doesn't catch it. This exact mechanism was
+confirmed by reading the compiled `@x402/avm` client scheme source directly — see
+[D7 #2 and #3](/reference/decision-log#d7-ground-truth-pulled-from-the-installed-package-source-not-just-docs)
+in the decision log.
+
+`A1` proves the facilitator's own `verifyFeePayerTransaction()` check catches every one of these
+rewrites before it would ever co-sign and broadcast the group.
+
+## Sub-cases
+
+Each sub-case maps directly onto one of the USENIX study's four violation classes:
+
+| Mutation | Simulates | Violation class |
+|---|---|---|
+| `feePayerAmount > 0` | Fee-payer leg drains real value instead of a pure self-payment | Asset Theft |
+| `feePayerReceiver` redirected | Fee-payer leg pays a third party instead of itself | Asset Theft |
+| `feePayerCloseRemainderTo` set | Fee-payer leg closes the account's remainder balance to a third party | Asset Theft |
+| `feePayerRekeyTo` set | Fee-payer leg rekeys the facilitator's own operational account | Asset Theft / account takeover |
+| `feePayerFee` inflated | Fee-payer leg's fee is inflated far past `maxReasonableGroupFee` | Gas Abuse |
+
+## How it works
+
+<Steps>
+  <Step title="Discover the fee-payer address">
+    Calls `GET /supported` and reads the facilitator's Algorand signer address from
+    `signers["algorand:*"]` — not blindly the first entry in the whole map, since a
+    multi-chain facilitator lists EVM/SVM signers too.
+  </Step>
+  <Step title="Baseline sanity settlement">
+    Builds and *actually settles* one honest sponsored-fee payment. If this fails, every tamper
+    result below would be meaningless — the facilitator might just reject everything on this
+    path — so A1 fails outright rather than reporting false confidence.
+  </Step>
+  <Step title="Run each sub-case against /verify only">
+    For each of the five mutations, Ward builds a fresh payment, tampers the fee-payer leg, and
+    calls `/verify` — **never `/settle`** for the malicious sub-cases. `/verify` exercises the
+    identical `verifyFeePayerTransaction` check by signing the tampered leg internally without
+    ever broadcasting it, so a real bug here can't damage the facilitator's operational key even
+    though this suite runs against a real, self-hosted instance.
+  </Step>
+</Steps>
+
+## Pass condition
+
+```ts
+const passed = baselineSettle.success && subResults.every(r => r.ok);
+```
+
+The honest baseline must actually settle, **and** every one of the five tampered sub-cases must be
+rejected by `/verify`.
+
+## Sample output
+
+```
+$ ward fuzz A1
+
+Fuzzing A1 — atomic group integrity
+Result: PASS (2143ms)
+fee-payer leg amount > 0 (drains value instead of a pure self-payment): OK;
+fee-payer leg receiver redirected away from self: OK;
+fee-payer leg closes remainder balance to a third party: OK;
+fee-payer leg rekeys the facilitator's own account: OK;
+fee-payer leg fee inflated far past the reasonable cap: OK
+```
+
+<Card title="Next: Gas Abuse Resubmission" icon="gauge-high" href="/invariants/u5-gas-abuse-resubmission" horizontal />

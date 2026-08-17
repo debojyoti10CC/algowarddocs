@@ -1,0 +1,218 @@
+---
+title: Decision Log
+description: "Every judgment call made while building Ward, in the order it was made."
+---
+
+This is a formatted rendering of the repository's `DECISIONS.md` — an append-only record of every
+non-obvious judgment call made while building Ward, kept so every claim in this documentation is
+traceable back to *why*, not just *what*. Where this page and the actual `src/` code ever
+disagree, the code is newer and correct.
+
+## D0 — GITHUB_TOKEN not set
+
+`GITHUB_TOKEN` was not present in the environment at setup time. The build proceeded without a
+GitHub MCP server, using direct fetches against `raw.githubusercontent.com` and GitHub tree pages
+to inspect the facilitator repo instead. This was sufficient — no GitHub API rate-limit or
+auth-gated content was ever needed.
+
+## D1 — Target facilitator
+
+**Chosen:** GoPlausible's x402-avm facilitator, at `examples/typescript/facilitator/` inside the
+`x402-foundation/x402` monorepo (GoPlausible's Algorand work is developed on the
+`branch-v2-algorand-publish` branch of `github.com/GoPlausible/x402-avm`, which tracks the
+official x402-foundation monorepo — the published `@x402/avm` npm package's `repository` field
+points to `x402-foundation/x402`, confirming this is the canonical, foundation-adopted
+implementation, not an abandoned fork).
+
+**Why:** it's already the reference implementation named in this project's own devrel skill docs.
+Verified directly: `examples/typescript/facilitator/index.ts` is a real Express service
+implementing `GET /supported`, `POST /verify`, `POST /settle`; `@x402/core` and `@x402/avm` are
+real, actively published npm packages maintained by GoPlausible/Coinbase engineers under the
+x402-foundation org; and the facilitator is genuinely self-hostable.
+
+**Wrinkle:** the facilitator example is a multi-chain service — it also requires
+`EVM_PRIVATE_KEY` and `SVM_PRIVATE_KEY` at startup and exits immediately if either is missing,
+even though Ward only exercises the AVM/Algorand scheme. Resolved by generating throwaway,
+well-formed (but never funded or exercised) EVM and SVM keys purely to satisfy the startup check.
+
+**Self-hosting mechanism:** the facilitator's own `package.json` depends on `@x402-avm/*` via
+`workspace:*` — a monorepo-internal package, not independently installable. `docker-compose.yml`
+builds an image that clones `GoPlausible/x402-avm` at container-build time and builds/starts the
+facilitator from within that cloned workspace.
+
+## D2 — A1 (atomic group integrity) viability: viable
+
+Confirmed via the facilitator's documented "fee abstraction" flow that every sponsored settlement
+is a 2-transaction Algorand atomic group: the client's payment (fee = 0, signed by the client) and
+a self-payment by the facilitator's fee-payer address (fee covers both transactions, left unsigned
+by the client, co-signed by the facilitator at settle time). The facilitator is documented to
+validate the fee-payer leg's safety (self-payment, amount == 0, no rekey/close-to, fee under a
+reasonable cap) before co-signing and submitting the group atomically — a real, concrete
+atomic-group trust boundary. A1 was built as originally specified, with no substitution needed —
+it's the headline invariant precisely because this boundary is real, not hypothetical.
+
+## D3 — API shapes
+
+Real V2 schemas were pulled from the facilitator's own reference documentation rather than assumed
+from the generic x402 spec: `PaymentPayload`'s `{ x402Version: 2, scheme: "exact", network,
+payload: { paymentGroup, paymentIndex } }` shape; `PaymentRequirements`'s `{ scheme, network,
+maxAmountRequired, resource, description, mimeType, payTo, maxTimeoutSeconds, asset, outputSchema,
+extra? }` shape; that `/verify` and `/settle` both take `{ paymentPayload, paymentRequirements }`
+as the POST body; and that network identifiers are CAIP-2, not informal strings like
+`"algorand-testnet"`. This divergence from the generic, EVM-first x402 spec is itself worth
+surfacing in every report Ward produces — `U1`'s evidence includes the raw requirements/payload so
+a reader can see exactly how Algorand's shape differs.
+
+<Info>
+  D7 below corrects several details of this entry after reading the actual installed package
+  source — treat D7 as the more accurate version wherever the two disagree.
+</Info>
+
+## D4 — Network target: TestNet, not LocalNet
+
+The AlgoKit CLI was not installed in the build environment, and Algorand LocalNet requires it.
+Rather than adding an AlgoKit-CLI install as a prerequisite just to get a local node, Ward targets
+**Algorand TestNet** by default: `algosdk`/`@x402/avm` already default to public TestNet algod
+endpoints, and this project's own x402-on-Algorand skill documentation is written testnet-first.
+`docker-compose.yml` still runs the self-hosted facilitator container per the original build
+brief, but that container talks to public TestNet algod rather than a LocalNet node. This keeps
+`ward init && ward test` reproducible on a second machine without a LocalNet bootstrap, at the
+cost of needing TestNet ALGO/USDC funded via public dispensers (see D9).
+
+## D5 — Ward is not an AlgoKit-templated project
+
+This project's own "Creating New Projects" guidance (`algokit init -n <name> -t typescript ...`)
+is written for AlgoKit contract/frontend projects. Ward is a standalone TypeScript CLI tool with
+no smart contract and no frontend — an npm package built with `commander`, `algosdk`,
+`@x402/core`/`@x402/avm`, and `algokit-utils-ts` used only as a library for account/transaction
+helpers, never via the AlgoKit CLI. Scaffolded directly rather than via `algokit init`.
+
+## D6 — Invariant build order
+
+Built in the order `U1 → U4 → U2 → U3 → A1` first (all must-have), front-loading `U1`/`U4` since
+they're the simplest end-to-end proof that the pipeline works before tackling `U2`/`U3`'s harder
+failure-injection and concurrency semantics. `U5`, `A2`, `A3` (stretch) were attempted afterward,
+in that priority order, only once every must-have was solid.
+
+## D7 — Ground truth pulled from the installed package source, not just docs
+
+After installing dependencies, the actual compiled `@x402/core` and `@x402/avm` type declarations
+and compiled source were read directly — not just the reference documentation, which turned out to
+be stale or paraphrased in several places. This changed several concrete decisions:
+
+<AccordionGroup>
+  <Accordion title="1. Real wire types differ from the documented ones">
+    `PaymentRequirements` is actually `{ scheme, network, asset, amount, payTo, maxTimeoutSeconds,
+    extra }` — no `maxAmountRequired`/`resource`/`description`/`mimeType`/`outputSchema`, which
+    live on `PaymentRequired.resource` / `PaymentPayload.resource` instead. `PaymentPayload` is
+    `{ x402Version, resource?, accepted: PaymentRequirements, payload, extensions? }` — it embeds
+    the accepted requirements. `SettleResponse.transaction` is the field name, not
+    `txHash`/`txId` as an earlier paraphrase implied. `core/types.ts` was corrected to match the
+    installed type declarations exactly.
+  </Accordion>
+  <Accordion title="2. Real atomic-group order corrects D2's original assumption">
+    Reading the compiled client scheme implementation directly shows the fee-payer self-payment is
+    **index 0** (built first, left unsigned) and the client's signed transfer is **index 1**
+    (`paymentIndex: 1`) — the reverse of D2's initial guess. The fee-payer leg's fee is calculated
+    as the sum of both transactions' size-based fees, pooled entirely onto index 0; the payment
+    leg gets `staticFee: 0`.
+  </Accordion>
+  <Accordion title="3. A1 now has an exact, code-grounded target">
+    Reading the facilitator's full validation algorithm gave the complete, real check A1 exploits:
+    `verifyFeePayerTransaction()` validates the *unsigned* fee-payer leg (self-payment, amount ==
+    0, no `closeRemainderTo`, no `rekeyTo`, fee ≤ a reasonable cap) — but that leg is never signed
+    by the client, only by the facilitator at settle time. Because it's unsigned, an attacker who
+    intercepts the payload after the client signs their own leg can rewrite the fee-payer leg
+    arbitrarily, as long as the forged transaction still carries the original `group` field, so
+    the separate group-ID-consistency check doesn't catch it. A1 is built as 5 concrete sub-cases
+    against this exact check, each mapping onto one of the USENIX study's four violation classes.
+    This is a strictly more precise test than a generic "alter a transaction in the group"
+    description would produce — grounded in the facilitator's actual code path, not a guess.
+  </Accordion>
+  <Accordion title="4. A3's real target, per the actual code">
+    `settle()` unconditionally calls `verify()` as its own first step — it never trusts a
+    previously cached `/verify` decision. So the interesting version of "does settle trust a stale
+    pre-rekey check" is: does the *fresh* verify inside settle() re-check spending authority
+    against the account's *current* on-chain auth-addr, or only against the address's inherent
+    ed25519 key (which never changes even after a rekey)? The facilitator's local
+    `ed25519Verifier` check uses the latter — a potential local blind spot — but the subsequent
+    `simulateTransactionGroup()` call runs a real algod simulation, which *does* enforce actual
+    on-chain auth-addr rules. A3 tests the net effect end-to-end rather than assuming which
+    internal layer would catch it — a PASS here is as valid and reportable an outcome as a FAIL.
+  </Accordion>
+  <Accordion title="5. The client scheme always builds an ASA transfer">
+    Never a native-ALGO payment — `composer.addAssetTransfer` is called unconditionally.
+    Ward's happy-path payments use the Algorand TestNet USDC ASA (`10458941`) via `ExactAvmScheme`,
+    matching real x402-on-Algorand usage.
+  </Accordion>
+</AccordionGroup>
+
+## D8 — Pinning algokit-utils to the exact version @x402/avm uses
+
+An initial `npm install` resolved the top-level `@algorandfoundation/algokit-utils` dependency to
+a different major version than the one `@x402/avm` depends on internally, which npm correctly
+nested as a second copy to satisfy that internal dependency. Because Ward's own tamper code needs
+to construct and decode the exact same `Transaction` class instances that flow through
+`@x402/avm`'s encode/decode functions, using a different major version's `Transaction` class would
+be a real, easy-to-miss type/runtime mismatch. Ward's own dependency was pinned explicitly to the
+same version `@x402/avm` uses, so there's exactly one copy in the tree and no ambiguity about which
+`Transaction` class is in play.
+
+## D9 — TestNet dispensers can't be automated end-to-end
+
+Algorand's TestNet ALGO and USDC dispensers are both captcha-gated web forms, not plain APIs Ward
+can post to on its own. `ward init` and `scripts/fund-accounts.ts` automate everything **except**
+the initial funding of one bootstrap account (`WARD_FUNDER_PRIVATE_KEY`'s address) and the
+facilitator's own signing key (`AVM_PRIVATE_KEY`'s address) — those two addresses need one manual
+visit to each dispenser. Once funded, `WARD_FUNDER` auto-funds every other test account Ward needs,
+so this manual step happens once per environment, not once per run. This is called out explicitly
+in `.env.example` and the fund-accounts script's own printed instructions, rather than pretending
+`ward init` is push-button from a cold start.
+
+## D10 — Throwaway EVM/SVM keys are generated locally, not derived from anything real
+
+Per D1's wrinkle, the upstream facilitator example refuses to start without `EVM_PRIVATE_KEY` /
+`SVM_PRIVATE_KEY` even though only the AVM scheme is ever registered or exercised.
+`scripts/fund-accounts.ts` generates a random, well-formed hex string (EVM) and base58 string
+(SVM) purely to satisfy that startup check — no real key material, no funding, no chain
+interaction on either network. This is safe specifically because those signers are never invoked
+by anything Ward does.
+
+## D11 — A3 runs on a disposable throwaway account, not the shared fixture account
+
+`createA3Invariant` generates a brand-new keypair, funds it, and rekeys *that* account rather than
+the shared client account every other invariant reuses. A rekey is a real, potentially
+hard-to-reverse on-chain state change — if the "rekey back" step at the end of A3 ever failed to
+execute (a crashed process, a network partition mid-run), a shared fixture account left rekeyed to
+a discarded key would strand every other invariant for the rest of that run and any future run
+reusing the same `.env`. Isolating the blast radius to a purpose-built, funded-just-for-this-test
+account means the worst case of a failed revert is one small, clearly-logged, disposable account
+being stuck — not the whole suite. The revert itself still runs unconditionally in a `finally`
+block, and a failure to revert is logged loudly rather than silently swallowed.
+
+## D12 — U2/U3's "retry safety" assertion is "no distinct double-settlement," not literally "success exactly once"
+
+Both U2 (sequential retries) and U5 (resubmission) initially read as "assert success happens
+exactly once." Algorand's own txID deduplication means replaying byte-identical signed transaction
+bytes to algod is safe by construction — a facilitator that echoes `success: true` with the *same*
+transaction id on every retry has not caused any economic harm, even though "success" technically
+appeared more than once. The sharper, chain-grounded version of the safety property is: repeated
+retries of one signed authorization must never resolve to more than one **distinct** on-chain
+transaction id. U2 and U3 assert that directly, and additionally report whether exactly-one-success
+also held as informative context, rather than failing a facilitator that's actually safe just
+because it wasn't maximally strict about idempotency bookkeeping.
+
+## D13 — The manual-payment verification step could not be completed autonomously during the original build
+
+Getting the facilitator running and completing one real payment on TestNet, confirmed on an
+explorer, before trusting any invariant result, requires TestNet ALGO in a real account — and both
+Algorand TestNet dispensers are captcha-gated web forms with no API an autonomous build process can
+complete on its own. Every other build-order step — scaffold, facilitator client, Algorand
+adapter, all eight invariants, CLI, Docker, unit tests, docs — was completed and the project built,
+typechecked, and unit-tested cleanly; only the live, real-funds run required a human to click
+through the two dispenser pages once, exactly as `scripts/fund-accounts.ts` prints.
+
+---
+
+*This log is append-only in the source repository — further entries are added below D13 as new
+judgment calls come up.*

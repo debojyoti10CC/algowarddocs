@@ -1,0 +1,129 @@
+---
+title: Quickstart
+description: "Fund accounts, boot a facilitator, and run the full invariant suite."
+---
+
+This walks through everything from a clean clone to a finished `ward test` report. It takes about
+10–15 minutes of hands-on time, plus one manual step you can't skip: funding two TestNet accounts
+through Algorand's captcha-gated dispensers.
+
+<Note>
+  Ward targets **Algorand TestNet** by default — no LocalNet or AlgoKit CLI install required. See
+  [why](/reference/decision-log#d4-network-target-testnet-not-localnet) in the decision log.
+</Note>
+
+## 1. Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Node.js 20+" icon="node-js">
+    Ward's `engines.node` field requires Node 20 or newer.
+  </Card>
+  <Card title="Docker" icon="docker">
+    Needed to self-host the facilitator via `docker-compose.yml`.
+  </Card>
+</CardGroup>
+
+## 2. Clone and configure
+
+```bash
+git clone <your-fork-or-clone-url> ward
+cd ward
+cp .env.example .env
+```
+
+`.env.example` documents every variable Ward's CLI, self-hosted facilitator, and paid verification
+server need — see the full breakdown in [Environment Variables](/guides/environment-variables).
+
+## 3. Generate accounts
+
+```bash
+npx tsx scripts/fund-accounts.ts
+```
+
+This script:
+
+1. Generates a fresh Algorand keypair for each account Ward needs (`WARD_FUNDER`, `WARD_CLIENT`,
+   `WARD_PAYTO`, `AVM_PRIVATE_KEY`) and prints the address + base64 secret key for each.
+2. Generates throwaway, well-formed EVM and SVM keys purely to satisfy the upstream facilitator
+   example's multi-chain startup check — they're never funded or used to sign anything real.
+
+Paste every printed value into `.env`.
+
+## 4. Fund the two bootstrap accounts
+
+Algorand's TestNet dispensers are captcha-gated web forms, so this one step can't be automated.
+Visit each dispenser and fund:
+
+<Steps>
+  <Step title="Fund WARD_FUNDER">
+    Send TestNet ALGO to the `WARD_FUNDER` address via the
+    [ALGO dispenser](https://bank.testnet.algorand.network/). Once funded, `WARD_FUNDER`
+    auto-funds every other account Ward needs — you only do this once per environment.
+  </Step>
+  <Step title="Fund AVM_PRIVATE_KEY's address">
+    Send TestNet ALGO to the facilitator's own signing address (the address for
+    `AVM_PRIVATE_KEY`) via the same dispenser. This account co-signs settlement fee-payer
+    transactions, so it needs its own balance.
+  </Step>
+</Steps>
+
+## 5. Install dependencies
+
+```bash
+npm install
+```
+
+## 6. Boot the facilitator and verify one real payment
+
+```bash
+npm run ward -- init
+```
+
+`ward init` is idempotent and:
+
+- Boots the self-hosted facilitator via `docker-compose up` and waits for its health check.
+- Auto-funds `WARD_CLIENT` and any disposable accounts from `WARD_FUNDER`.
+- Opts `WARD_PAYTO` into the test ASA (TestNet USDC) if a private key is available for it.
+- Runs one real, complete payment through `/verify` and `/settle` and confirms it on-chain,
+  so nothing downstream runs against an unverified facilitator.
+
+## 7. Run the full invariant suite
+
+```bash
+npm run ward -- test
+```
+
+This runs all eight invariants (`U1`–`U5`, `A1`–`A3`), prints a pass/fail table, and writes:
+
+- `reports/ward-report-<timestamp>.json` — the full run, with reproducible evidence per invariant.
+- `reports/latest.json` — always the most recent run, read by `ward report`.
+
+The process exits non-zero if any **must-have** invariant (`U1`, `U2`, `U3`, `U4`, `A1`) fails —
+safe to wire straight into CI.
+
+## 8. Inspect one invariant closely
+
+```bash
+npm run ward -- fuzz A1
+```
+
+`ward fuzz <id>` runs a single invariant in isolation with full, verbose evidence — the fastest
+way to see exactly what payload Ward sent and what the facilitator returned. `A1`, atomic group
+integrity, is Ward's headline invariant — see [A1](/invariants/a1-atomic-group-integrity) for what
+it proves.
+
+## Once it's built
+
+```bash
+npm run build
+ward init
+ward test
+```
+
+The compiled `dist/cli/index.js` is the same binary published as `ward` in `package.json`'s `bin`
+field — use whichever entry point fits your workflow.
+
+<Card title="Next: understand what each invariant proves" icon="shield-check" href="/invariants/overview" horizontal>
+  Read the Invariants section before interpreting a report — a PASS or FAIL only means something
+  once you know exactly what was tested.
+</Card>

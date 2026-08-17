@@ -1,0 +1,91 @@
+---
+title: Self-Hosting the Facilitator
+description: "How docker-compose.yml builds and runs a real, unmodified x402-avm facilitator."
+---
+
+Ward never tests the shared, public `facilitator.goplausible.xyz` instance — every result it
+produces is about a real, self-hosted facilitator process Ward controls end to end. This page
+covers how that container is built and how to work with it directly.
+
+## Why a self-hosted facilitator at all
+
+Testing correctness guarantees adversarially means intentionally sending malicious payloads. Doing
+that against shared production infrastructure would be irresponsible regardless of intent — a
+self-hosted, disposable instance is what makes "adversarial" safe to run at all.
+
+## What gets built
+
+`docker/facilitator.Dockerfile` builds and runs
+[GoPlausible's x402-avm facilitator](https://github.com/GoPlausible/x402-avm) exactly as
+published — nothing patched, nothing mocked.
+
+<Steps>
+  <Step title="Clone at build time">
+    The upstream facilitator ships as a pnpm-workspace-internal package
+    (`@x402-avm/core-facilitator-typescript`, depending on other `@x402-avm/*` packages via
+    `workspace:*`) with no standalone Dockerfile of its own — it's meant to run from inside the
+    monorepo. The image clones `GoPlausible/x402-avm` at `branch-v2-algorand-publish` at build
+    time to get that full workspace.
+  </Step>
+  <Step title="Install and build only the facilitator's dependency tree">
+    `pnpm --filter "@x402-avm/core-facilitator-typescript..." run build` builds the facilitator
+    and its actual workspace dependencies — not every example app in the monorepo (a plain
+    `pnpm build` would also try to build unrelated apps like a Next.js example that fails without
+    app-specific env vars Ward never needs).
+  </Step>
+  <Step title="Preserve the full repo path structure at runtime">
+    The workspace's `node_modules/@x402-avm/*` entries are pnpm symlinks with relative targets
+    reaching outside `examples/typescript` into a sibling `typescript/packages/` tree. The final
+    image copies the entire cloned repo, not a flattened subset, so those symlinks keep resolving.
+  </Step>
+  <Step title="Start the real facilitator process">
+    `pnpm start` inside `examples/typescript/facilitator`, exposing port `4022`.
+  </Step>
+</Steps>
+
+## Running it directly
+
+```bash
+docker compose up -d --build
+```
+
+`ward init` runs exactly this command for you, then waits for the health check and verifies one
+real payment — see [`ward init`](/cli/init). You rarely need to invoke Compose by hand, but it's a
+plain Docker Compose service if you do.
+
+## Configuration
+
+The container reads four environment variables, all sourced from your `.env` (see
+`docker-compose.yml`):
+
+| Variable | Purpose |
+|---|---|
+| `AVM_PRIVATE_KEY` | The facilitator's own Algorand signing key — needs its own TestNet ALGO balance to co-sign sponsored-fee settlements. |
+| `ALGOD_SERVER` | Which algod endpoint the facilitator itself talks to (defaults to public TestNet). |
+| `EVM_PRIVATE_KEY` / `SVM_PRIVATE_KEY` | Required by the upstream example's multi-chain startup check, never exercised — see below. |
+
+Full details in [Environment Variables](/guides/environment-variables#self-hosted-facilitator-docker-composeyml).
+
+## Health check
+
+```yaml
+healthcheck:
+  test: ["CMD", "node", "-e", "fetch('http://localhost:4022/supported').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  interval: 5s
+  timeout: 5s
+  retries: 20
+```
+
+Polls the facilitator's own `GET /supported` endpoint — the same endpoint Ward's `U4` invariant
+reads to discover what the facilitator declares support for.
+
+<Accordion title="Why does it need EVM_PRIVATE_KEY / SVM_PRIVATE_KEY if Ward only tests Algorand?">
+  The upstream facilitator example is a genuinely multi-chain service — it `process.exit(1)`s at
+  startup if either key is missing, even though only the Algorand (`ExactAvmScheme`) path is ever
+  registered or exercised by anything Ward does. `scripts/fund-accounts.ts` generates a random,
+  well-formed throwaway hex string (EVM) and base58 string (SVM) purely to satisfy that check — no
+  real key material, no funding, no chain interaction on either network. This is safe specifically
+  because those signers are never invoked by anything in Ward's request path.
+</Accordion>
+
+<Card title="Point the paid API at your own instance" icon="cloud" href="/server/deployment#why-payment_facilitator_url-defaults-to-the-public-facilitator" horizontal />

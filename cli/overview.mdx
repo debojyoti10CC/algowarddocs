@@ -1,0 +1,59 @@
+---
+title: CLI Overview
+description: "The ward command-line tool: init, test, fuzz, and report."
+---
+
+Ward's CLI is built on [Commander](https://github.com/tj/commander.js) (`src/cli/index.ts`) and
+exposes four commands. Every command shares a common setup path (`src/cli/setup.ts`'s
+`buildScenario()`), which loads `.env`, constructs the Algorand chain adapter and facilitator
+client, derives the test fixture, and registers all eight invariants.
+
+## Commands at a glance
+
+| Command | Purpose |
+|---|---|
+| [`ward init`](/cli/init) | Boot the self-hosted facilitator, fund test accounts, verify one real payment end-to-end. Idempotent. |
+| [`ward test`](/cli/test) | Run the full invariant suite, write a JSON report. Non-zero exit if any must-have invariant fails. |
+| [`ward fuzz <id>`](/cli/fuzz) | Run one invariant in isolation with full, verbose evidence output. |
+| [`ward report`](/cli/report) | Re-render the last `ward test` run — works without a live facilitator. |
+
+## Two ways to invoke it
+
+<Tabs>
+  <Tab title="From TypeScript source (no build step)">
+    ```bash
+    npm run ward -- init
+    npm run ward -- test
+    npm run ward -- fuzz A1
+    npm run ward -- report
+    ```
+    Runs via `tsx src/cli/index.ts`, defined as the `ward` script in `package.json`.
+  </Tab>
+  <Tab title="Compiled binary">
+    ```bash
+    npm run build
+    ward init
+    ward test
+    ward fuzz A1
+    ward report
+    ```
+    After `npm link` (or a global install), `ward` resolves to `dist/cli/index.js`, the exact
+    entry point declared in `package.json`'s `bin` field.
+  </Tab>
+</Tabs>
+
+## Global behavior
+
+Every command is wrapped in a shared error handler (`runOrExit` in `src/cli/index.ts`): an
+uncaught error prints as `ward: <message>` in red and sets a non-zero exit code, rather than
+dumping a raw stack trace. Set `WARD_DEBUG=1` in your environment to also print the full stack
+trace on failure.
+
+```bash
+WARD_DEBUG=1 npm run ward -- test
+```
+
+<Card title="Start with ward init" icon="rocket" href="/cli/init" horizontal>
+  Always run `ward init` before `ward test` — it's the step that proves the facilitator you're
+  about to run adversarial tests against actually works at all.
+</Card>

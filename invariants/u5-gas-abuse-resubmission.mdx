@@ -1,0 +1,54 @@
+---
+title: "Gas Abuse Resubmission"
+description: "Rejecting a doomed payment must stay a bounded-cost operation, every time."
+---
+
+<CardGroup cols={4}>
+  <Card title="Invariant" icon="tag">U5</Card>
+  <Card title="Category" icon="globe">Universal</Card>
+  <Card title="Priority" icon="circle-dashed">Stretch</Card>
+  <Card title="Violation class" icon="triangle-exclamation">Gas Abuse</Card>
+</CardGroup>
+
+## What it proves
+
+A payment's cheap, structural checks — signature validity, declared amount/receiver/asset match —
+can all pass at `/verify` time even though the underlying transfer can never actually succeed
+(e.g. the client's real balance can't cover it). The failure only shows up when the facilitator
+tries to actually settle. If resubmitting the same doomed payload gets progressively more
+expensive for the facilitator to reject, a client (or attacker) can force it to spend unbounded
+work rejecting a payment that was never going to succeed.
+
+**Source:** USENIX Security '26 facilitator study — Gas Abuse violation class.
+
+## How it works
+
+Ward builds a payload requesting an amount comfortably beyond any realistic TestNet USDC balance —
+large enough that `/verify`'s declared-terms checks pass cheaply, but the actual transfer can never
+succeed — then resubmits that same doomed payload to `/settle` **five times**, timing each attempt.
+
+## Pass condition
+
+Two conditions must both hold:
+
+```ts
+const neverSucceeded = attempts.every(a => !a.success);
+const boundedCost = firstLatency === 0 || maxLatency <= firstLatency * LATENCY_BLOWUP_FACTOR; // 10x
+const passed = neverSucceeded && boundedCost;
+```
+
+1. **`neverSucceeded`** — the unaffordable payload must never succeed on any resubmission. If it
+   ever does, that means `/verify`'s cheap checks and `/settle`'s real-balance check disagree in a
+   dangerous direction.
+2. **`boundedCost`** — no resubmission's latency may exceed **10x** the first attempt's latency.
+   A latency blowup beyond that factor is treated as evidence of unbounded internal amplification
+   (e.g. a naive retry-with-backoff loop triggered per resubmission) rather than a flat, bounded
+   rejection cost.
+
+## Reading a failure
+
+A latency-based FAIL reports the exact multiplier observed, e.g. *"rejection latency grew 14.2x
+across resubmissions (312ms → 4438ms)"* — useful for spotting a facilitator whose rejection path
+does real, scaling work (a chain query, a lock contest) instead of failing fast and cheap.
+
+<Card title="Next: ASA Opt-In Precheck" icon="check-double" href="/invariants/a2-asa-optin-precheck" horizontal />

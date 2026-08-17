@@ -1,0 +1,63 @@
+---
+title: Environment Variables
+description: "Every variable Ward's CLI, self-hosted facilitator, and hosted verification server read."
+---
+
+`.env.example` is the source of truth — copy it before doing anything else:
+
+```bash
+cp .env.example .env
+```
+
+Every variable below is grouped by which part of Ward actually reads it.
+
+## Ward CLI — the host-side test harness
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `FACILITATOR_URL` | No | `http://localhost:4022` | The facilitator `ward test` runs the full guarantee suite against. |
+| `WARD_NETWORK` | No | `testnet` | `testnet` or `mainnet`. |
+| `ALGOD_TESTNET_URL` | No | `https://testnet-api.algonode.cloud` | Public algod endpoint Ward reads chain state from. |
+| `ALGOD_TOKEN` | No | `""` | Only needed for a private/authenticated algod endpoint. |
+| `USDC_ASSET_ID` | No | `10458941` | TestNet USDC's ASA id — the asset Ward's happy-path payments use. |
+| `WARD_CLIENT_PRIVATE_KEY` | **Yes** | — | Base64 algosdk secret key for the account Ward signs test payments from. |
+| `WARD_PAYTO_ADDRESS` | **Yes** | — | The seller/resource-owner stand-in Ward pays. |
+| `WARD_PAYTO_PRIVATE_KEY` | No | — | Only needed if you want `ward init` to opt this address into the test ASA for you. |
+| `WARD_FUNDER_PRIVATE_KEY` | No | — | Funds `WARD_CLIENT` and A3's disposable throwaway accounts via `ward init`. Omit to fund those addresses by hand instead. |
+
+## Self-hosted facilitator (`docker-compose.yml`)
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `AVM_PRIVATE_KEY` | **Yes** | — | The facilitator's own fee-payer signing key. Needs its own TestNet ALGO balance to co-sign settlement fee-payer transactions. |
+| `ALGOD_SERVER` | No | `https://testnet-api.algonode.cloud` | The algod endpoint the containerized facilitator itself talks to. |
+| `EVM_PRIVATE_KEY` | **Yes** | — | Any well-formed throwaway hex key. Required by the upstream multi-chain facilitator example to start, but never exercised — Ward only tests the Algorand scheme. |
+| `SVM_PRIVATE_KEY` | **Yes** | — | Any well-formed throwaway base58 key. Same as above, for the Solana scheme. |
+
+<Warning>
+  `docker-compose.yml` uses Compose's `${VAR:?message}` syntax for `AVM_PRIVATE_KEY`,
+  `EVM_PRIVATE_KEY`, and `SVM_PRIVATE_KEY` — Compose refuses to start with a clear error if any is
+  unset, rather than starting the facilitator in a broken state.
+</Warning>
+
+## Hosted verification server (`src/server`)
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `SERVER_PAY_TO_ADDRESS` | **Yes** | — | Receives this service's own x402 payments for `POST /verify-facilitator`. Deliberately separate from the `WARD_*` test-harness accounts above — this is service revenue, not a test fixture. |
+| `SERVER_PORT` | No | `4030` | Local-dev only. Deployed instances bind to `PORT`, assigned by the host platform. |
+| `PAYMENT_FACILITATOR_URL` | No | `https://facilitator.goplausible.xyz` | The facilitator that processes payment **to** this service — never the facilitator being tested. See [Deployment](/server/deployment#why-payment_facilitator_url-defaults-to-the-public-facilitator). |
+
+## Generating everything at once
+
+```bash
+npx tsx scripts/fund-accounts.ts
+```
+
+Prints a fresh keypair (address + base64 secret key) for `WARD_FUNDER`, `WARD_CLIENT`,
+`WARD_PAYTO`, and `AVM_PRIVATE_KEY`, plus throwaway well-formed `EVM_PRIVATE_KEY` /
+`SVM_PRIVATE_KEY` values — paste all of it straight into `.env`. See the
+[Quickstart](/quickstart#3-generate-accounts) for the full walkthrough, including the one manual
+funding step this script can't automate.
+
+<Card title="Fund the accounts this script generates" icon="key" href="/quickstart#4-fund-the-two-bootstrap-accounts" horizontal />

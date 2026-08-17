@@ -1,0 +1,37 @@
+---
+title: "ward report"
+description: "Re-render the last ward test run — works without a live facilitator."
+---
+
+## Usage
+
+```bash
+ward report
+# or, from source:
+npm run ward -- report
+```
+
+## What it does
+
+Reads `reports/latest.json` and re-renders it as the same terminal table `ward test` prints —
+without needing a live facilitator, network access, or funded accounts. Useful for reviewing a
+previous run's results, sharing output from CI, or re-checking a report after the facilitator has
+since been shut down.
+
+```ts
+export async function runReportCommand(): Promise<void> {
+  const report = await readLatestReport();
+  console.log(renderTerminalReport(report));
+}
+```
+
+## When there's no report yet
+
+```
+ward: No report found at reports/latest.json. Run "ward test" first.
+```
+
+Run [`ward test`](/cli/test) at least once first — `ward report` never generates new data, it only
+replays the most recent recorded run.
+
+<Card title="See what a full run looks like" icon="terminal" href="/cli/test#example-output" horizontal />
