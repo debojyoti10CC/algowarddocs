@@ -132,7 +132,7 @@
         },
         {
           "anchor": "X",
-          "href": "https://x.com/algoward",
+          "href": "https://x.com/algorandward",
           "icon": "x-twitter"
         },
         {
@@ -159,7 +159,7 @@
   "footer": {
     "socials": {
       "github": "https://github.com/debojyoti10CC/alg402",
-      "x": "https://x.com/algoward"
+      "x": "https://x.com/algorandward"
     }
   }
 }
